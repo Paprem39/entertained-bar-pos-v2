@@ -1,0 +1,216 @@
+Entity 1 : User 
+id 
+username 
+passwordHash 
+pinHash
+displayName
+role
+isActive
+lastLoginAt
+createdAt 
+updatedAt 
+
+Entity 2 : UserSession
+id
+userId
+loginAt
+logoutAt
+isOnline
+createdAt
+updatedAt
+
+Entity 3 : Category
+id
+name
+icon
+color
+sortOrder
+isActive
+createdAt
+updatedAt
+
+Entity 4 : Product
+id
+categoryId
+name
+normalPrice
+tournamentPrice ⭐
+allowMixer
+isActive
+createdAt
+updatedAt
+
+Entity 5 : Bill
+id
+billNumber
+billName
+subtotal
+totalAmount
+discountAmount
+status
+openedAt
+closedAt
+createdByUserId
+createdAt
+updatedAt
+businessSessionId
+
+Entity 6 : BillItem
+id
+billId
+productId
+productName
+qty
+unitPrice
+lineTotal
+isStaffDrink
+staffDrinkFee
+staffDrinkRecipient
+addedByUserId
+createdAt
+updatedAt
+
+Entity 7 : Payment
+id
+billId
+paymentMethod
+amount
+receivedAmount
+changeAmount
+paymentNote
+paidAt
+receivedByUserId
+createdAt
+
+Entity 8 : AuditLog
+id
+userId
+action
+entityType
+entityId
+targetName
+description
+oldValue
+newValue
+ipAddress (Optional)
+deviceInfo (Optional)
+sessionId (Optional)
+createdAt
+
+Entity 9 : Stock
+id
+productId
+currentQty
+minimumQty
+lastAdjustedAt
+updatedByUserId
+createdAt
+updatedAt
+
+Entity 10 : StockMovement
+id
+stockId
+productId
+userId
+movementType
+reason
+quantity
+beforeQty
+afterQty
+referenceType
+referenceId
+note
+createdAt
+
+Entity 11 : OrderRequest
+id
+billId
+requestedByUserId
+approvedByUserId (Nullable)
+status
+note
+approvedAt
+createdAt
+updatedAt
+
+Entity 12 : OrderRequestItem
+id
+orderRequestId
+productId
+quantity
+note
+createdAt
+updatedAt
+
+Entity 13 : SystemSetting
+id
+key
+value
+description
+updatedByUserId
+updatedAt
+
+Entity 14 : ExpenseCategory
+id
+name
+icon
+color
+isFavorite
+sortOrder
+isActive
+createdAt
+updatedAt
+
+Entity 15 : Expense
+id
+expenseCategoryId
+amount
+note
+paidTo
+expenseDate
+createdByUserId
+createdAt
+updatedAt
+businessSessionId
+
+Entity 16 : DailyClosingSnapshot
+id
+businessSessionId
+totalBills
+totalSales
+cashAmount
+transferAmount
+totalExpense
+staffDrinkAmount
+netCashRemaining
+createdAt
+updatedAt
+
+Entity 17 : BusinessSession
+id
+businessDate
+openedAt
+closedAt
+status
+openedByUserId
+closedByUserId
+createdAt
+updatedAt
+
+Entity 18 : ProductMixer
+id
+productId
+mixerProductId
+createdAt
+updatedAt
+
+Entity 19 : BillItemMixer
+id
+billItemId
+mixerProductId
+mixerName
+createdAt
+
+
+
+
