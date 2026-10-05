@@ -29,6 +29,7 @@ export default function POSPage() {
   // State สำหรับควบคุม Custom Modal ต่างๆ
   const [openBillModal, setOpenBillModal] = useState(false)
   const [selectedBlockId, setSelectedBlockId] = useState<number | null>(null)
+  const [posTargetBlockId, setPosTargetBlockId] = useState<number | null>(null)
   const [customerInput, setCustomerInput] = useState('')
 
   const [addBlockModal, setAddBlockModal] = useState(false)
@@ -94,11 +95,13 @@ export default function POSPage() {
   // คลิกที่ Block เพื่อเปิดบิลหรือเข้าบิล
   const handleBlockClick = (blockId: number, status: string) => {
     const targetBlock = blocks.find(b => b.id === blockId);
+    
     if (status === 'available') {
       setSelectedBlockId(blockId);
       setCustomerInput(''); // เริ่มต้นเป็นค่าว่าง เพื่อบังคับพิมพ์
       setOpenBillModal(true);
     } else {
+      setPosTargetBlockId(blockId);
       setAlertMessage(`กำลังเข้าสู่หน้าขายสินค้าของ ${targetBlock?.name} | รหัสบิล: [${targetBlock?.billCode}] | ลูกค้า: ${targetBlock?.customer}`);
     }
   };
@@ -346,8 +349,17 @@ export default function POSPage() {
             <h3 className="text-lg font-bold text-amber-400">แจ้งเตือนระบบ</h3>
             <p className="text-slate-300 text-sm">{alertMessage}</p>
             <button
-              onClick={() => setAlertMessage(null)}
-              className="w-full py-2.5 bg-slate-800 hover:bg-slate-700 text-white font-medium rounded-xl transition"
+              onClick={() => {
+                const targetId = posTargetBlockId;
+                setAlertMessage(null);
+                setPosTargetBlockId(null);
+
+                // ถ้ามีค่า Block ที่กำลังจะเปิด ให้พุ่งไปที่หน้า POS ของ Block นั้นทันที
+                if (targetId) {
+                  router.push(`/pos/${targetId}`);
+                }
+              }}
+              className="w-full py-2.5 bg-amber-500 hover:bg-amber-400 text-slate-950 font-bold rounded-xl transition cursor-pointer"
             >
               รับทราบ
             </button>
