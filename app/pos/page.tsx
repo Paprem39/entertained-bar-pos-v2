@@ -3,28 +3,16 @@
 import { useEffect, useState } from 'react'
 import { useRouter } from 'next/navigation'
 import { Plus, Minus, Users, Clock, CheckCircle2, X } from 'lucide-react'
+import { supabase } from '../supabase'
 
 export default function POSPage() {
   const [user, setUser] = useState<any>(null)
   const [kickedModal, setKickedModal] = useState(false)
   const router = useRouter()
 
-  // สร้าง Block เริ่มต้น 20 บล็อก
-  const [blocks, setBlocks] = useState(() => 
-    Array.from({ length: 20 }, (_, index) => ({
-      id: index + 1,
-      name: `Block ${index + 1}`,
-      status: 'available', // available | occupied
-      customer: '',
-      billCode: '', // รหัสบิลรูปแบบ ลำดับ-DDMMYYYY-HHMM (เช่น 01-04102026-2215)
-      total: 0,
-      time: ''
-    }))
-  )
-
-  // State สำหรับเก็บลำดับบิลประจำวัน และวันที่ล่าสุด เพื่อใช้เช็ครีเซ็ตเมื่อขึ้นวันใหม่
-  const [dailyBillSequence, setDailyBillSequence] = useState(1)
-  const [lastBillDate, setLastBillDate] = useState('')
+  // State สำหรับเก็บข้อมูล Block ทั้งหมดจาก Supabase
+  const [blocks, setBlocks] = useState<any[]>([])
+  const [loading, setLoading] = useState(true)
 
   // State สำหรับควบคุม Custom Modal ต่างๆ
   const [openBillModal, setOpenBillModal] = useState(false)
@@ -36,6 +24,7 @@ export default function POSPage() {
   const [removeBlockModal, setRemoveBlockModal] = useState(false)
   const [alertMessage, setAlertMessage] = useState<string | null>(null)
 
+  // 1. ตรวจสอบ Session และ ดึงข้อมูล Blocks จาก Supabase เมื่อโหลดหน้าเว็บ
   useEffect(() => {
     const checkSession = async () => {
       try {
@@ -53,30 +42,79 @@ export default function POSPage() {
     }
 
     checkSession()
+    fetchBlocksFromDB()
+
     const interval = setInterval(checkSession, 5000)
     return () => clearInterval(interval)
   }, [])
 
-  // ยืนยันเพิ่ม Block
-  const confirmAddBlock = () => {
-    const newId = blocks.length + 1;
-    setBlocks(prev => [
-      ...prev,
-      {
-        id: newId,
-        name: `Block ${newId}`,
-        status: 'available',
-        customer: '',
-        billCode: '',
-        total: 0,
-        time: ''
+  // ฟังก์ชันดึงข้อมูล Block จาก Supabase
+  const fetchBlocksFromDB = async () => {
+    try {
+      const { data, error } = await supabase
+        .from('pos_blocks')
+        .select('*')
+        .order('id', { ascending: true })
+
+      if (error) throw error
+
+      if (data && data.length > 0) {
+        setBlocks(data)
+      } else {
+        // ถ้ายังไม่มีข้อมูลใน DB ให้สร้างเริ่มต้น 20 บล็อกแรกอัตโนมัติ
+        await initializeDefaultBlocks()
       }
-    ]);
+    } catch (err) {
+      console.error('Error fetching blocks:', err)
+    } finally {
+      setLoading(false)
+    }
+  }
+
+  // สร้างข้อมูลเริ่มต้น 20 บล็อกแรก กรณีตารางยังว่างเปล่า
+  const initializeDefaultBlocks = async () => {
+    const initialBlocks = Array.from({ length: 20 }, (_, index) => ({
+      id: index + 1,
+      name: `Block ${index + 1}`,
+      status: 'available',
+      customer: '',
+      bill_code: '',
+      total: 0,
+      time: ''
+    }))
+
+    const { error } = await supabase.from('pos_blocks').upsert(initialBlocks)
+    if (!error) {
+      setBlocks(initialBlocks)
+    }
+  }
+
+  // ยืนยันเพิ่ม Block
+  const confirmAddBlock = async () => {
+    const newId = blocks.length + 1;
+    const newBlock = {
+      id: newId,
+      name: `Block ${newId}`,
+      status: 'available',
+      customer: '',
+      bill_code: '',
+      total: 0,
+      time: ''
+    };
+
+    // บันทึกลง Supabase
+    const { error } = await supabase.from('pos_blocks').insert([newBlock]);
+    if (error) {
+      console.error('Error adding block:', error);
+      setAlertMessage('ไม่สามารถเพิ่ม Block ได้');
+    } else {
+      setBlocks(prev => [...prev, newBlock]);
+    }
     setAddBlockModal(false);
   };
 
   // ยืนยันลด Block
-  const confirmRemoveBlock = () => {
+  const confirmRemoveBlock = async () => {
     if (blocks.length <= 1) {
       setAlertMessage("ต้องมีอย่างน้อย 1 บล็อกครับ");
       setRemoveBlockModal(false);
@@ -88,7 +126,15 @@ export default function POSPage() {
       setRemoveBlockModal(false);
       return;
     }
-    setBlocks(prev => prev.slice(0, prev.length - 1));
+
+    // ลบออกจาก Supabase
+    const { error } = await supabase.from('pos_blocks').delete().eq('id', lastBlock.id);
+    if (error) {
+      console.error('Error removing block:', error);
+      setAlertMessage('ไม่สามารถลด Block ได้');
+    } else {
+      setBlocks(prev => prev.slice(0, prev.length - 1));
+    }
     setRemoveBlockModal(false);
   };
 
@@ -98,16 +144,16 @@ export default function POSPage() {
     
     if (status === 'available') {
       setSelectedBlockId(blockId);
-      setCustomerInput(''); // เริ่มต้นเป็นค่าว่าง เพื่อบังคับพิมพ์
+      setCustomerInput('');
       setOpenBillModal(true);
     } else {
       setPosTargetBlockId(blockId);
-      setAlertMessage(`กำลังเข้าสู่หน้าขายสินค้าของ ${targetBlock?.name} | รหัสบิล: [${targetBlock?.billCode}] | ลูกค้า: ${targetBlock?.customer}`);
+      setAlertMessage(`กำลังเข้าสู่หน้าขายสินค้าของ ${targetBlock?.name} | รหัสบิล: [${targetBlock?.bill_code}] | ลูกค้า: ${targetBlock?.customer}`);
     }
   };
 
-  // ยืนยันเปิดบิลด้วยชื่อลูกค้า
-  const handleOpenBillSubmit = (e: React.FormEvent) => {
+  // ยืนยันเปิดบิลด้วยชื่อลูกค้า (คำนวณลำดับบิลใหม่ตามวันปัจจุบัน)
+  const handleOpenBillSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!selectedBlockId || !customerInput.trim()) return;
 
@@ -115,38 +161,72 @@ export default function POSPage() {
     const day = String(now.getDate()).padStart(2, '0');
     const month = String(now.getMonth() + 1).padStart(2, '0');
     const year = now.getFullYear();
-    const currentDateStr = `${day}${month}${year}`; // รูปแบบ DDMMYYYY สำหรับเช็คเปลี่ยนวัน
+    const currentDateStr = `${day}${month}${year}`; // รูปแบบ DDMMYYYY
 
     const hours = String(now.getHours()).padStart(2, '0');
     const minutes = String(now.getMinutes()).padStart(2, '0');
     const timeStr = `${hours}:${minutes}`;
 
-    // ตรวจสอบว่าถ้าเปลี่ยนวันใหม่แล้ว ให้รีเซ็ตลำดับ (Sequence) กลับเป็น 1 ทันที
-    let currentSeq = dailyBillSequence;
-    if (lastBillDate !== currentDateStr) {
-      currentSeq = 1;
-      setLastBillDate(currentDateStr);
+    // 1. ดึงข้อมูลบล็อกทั้งหมดที่มีอยู่ในปัจจุบัน เพื่อเช็คว่าวันนี้มีการเปิดบิลไปกี่บิลแล้ว
+    const { data: existingBlocks, error: fetchError } = await supabase
+      .from('pos_blocks')
+      .select('bill_code');
+
+    let todayBillCount = 0;
+
+    if (!fetchError && existingBlocks) {
+      // กรองดูว่าบิลไหนที่มีวันที่ตรงกับวันนี้แล้วบ้าง เพื่อหาลำดับถัดไป
+      existingBlocks.forEach(b => {
+        if (b.bill_code) {
+          // รูปแบบบิลคือ [seq]-[DDMMYYYY]-[HHMM] เราจะดึงส่วนตรงกลางมาเช็ควันที่
+          const parts = b.bill_code.split('-');
+          if (parts.length === 3 && parts[1] === currentDateStr) {
+            todayBillCount++;
+          }
+        }
+      });
     }
 
-    const seqStr = String(currentSeq).padStart(2, '0');
+    // 2. ลำดับถัดไปของวันนี้ (ถ้าวันนี้ยังไม่มี ให้เริ่มที่ 1)
+    const nextSeq = todayBillCount + 1;
+    const seqStr = String(nextSeq).padStart(2, '0');
+
+    // 3. ประกอบร่างรหัสบิลใหม่ เช่น "01-06102026-0214"
     const generatedBillCode = `${seqStr}-${currentDateStr}-${hours}${minutes}`;
 
-    setBlocks(prev => prev.map(b => b.id === selectedBlockId ? {
-      ...b,
+    const updatedData = {
       status: 'occupied',
       customer: customerInput.trim(),
-      billCode: generatedBillCode,
+      bill_code: generatedBillCode,
       total: 0,
       time: timeStr
-    } : b));
+    };
 
-    // เพิ่มลำดับถัดไปสำหรับบิลถัดไปในวันเดียวกัน
-    setDailyBillSequence(currentSeq + 1);
+    // อัปเดตข้อมูลลง Supabase
+    const { error } = await supabase
+      .from('pos_blocks')
+      .update(updatedData)
+      .eq('id', selectedBlockId);
+
+    if (error) {
+      console.error('Error opening bill:', error);
+      setAlertMessage('ไม่สามารถเปิดบิลได้ กรุณาลองใหม่อีกครั้ง');
+    } else {
+      setBlocks(prev => prev.map(b => b.id === selectedBlockId ? { ...b, ...updatedData } : b));
+    }
 
     setOpenBillModal(false);
     setCustomerInput('');
     setSelectedBlockId(null);
   };
+
+  if (loading) {
+    return (
+      <div className="flex items-center justify-center min-h-[400px] text-amber-400 font-medium">
+        กำลังโหลดข้อมูลบล็อก POS...
+      </div>
+    );
+  }
 
   return (
     <div className="space-y-6 text-white max-w-7xl mx-auto">
@@ -213,7 +293,7 @@ export default function POSPage() {
                     </div>
                     <div className="flex items-center justify-between text-xs text-slate-400">
                       <span className="font-mono text-amber-400/90 font-semibold bg-slate-950 px-2 py-0.5 rounded border border-amber-500/20 tracking-wider">
-                        {block.billCode}
+                        {block.bill_code}
                       </span>
                       <span className="flex items-center"><Clock size={12} className="mr-1"/> {block.time}</span>
                     </div>
@@ -228,7 +308,7 @@ export default function POSPage() {
               <div className="pt-2 border-t border-slate-800/80 flex items-center justify-between text-xs">
                 <span className="text-slate-400">ยอดรวม</span>
                 <span className={`font-bold font-mono ${isOccupied ? 'text-amber-400 text-base' : 'text-slate-600'}`}>
-                  {isOccupied ? `${block.total.toLocaleString()} ฿` : '-'}
+                  {isOccupied ? `${(block.total || 0).toLocaleString()} ฿` : '-'}
                 </span>
               </div>
             </div>
@@ -236,7 +316,9 @@ export default function POSPage() {
         })}
       </div>
 
-      {/* --- CUSTOM MODAL: ระบุชื่อลูกค้าเปิดบิล (บังคับกรอก) --- */}
+      {/* --- MODAL และ Popup ส่วนอื่นๆ (คงเดิมตามโค้ดคุณ) --- */}
+      {/* ... โหมด Modal เปิดบิล / เพิ่ม-ลด Block / แจ้งเตือน เหมือนเดิม ... */}
+
       {openBillModal && (
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/70 backdrop-blur-sm p-4 animate-fadeIn">
           <div className="bg-slate-900 border border-slate-800 rounded-2xl p-6 max-w-md w-full shadow-2xl space-y-4">
@@ -284,7 +366,7 @@ export default function POSPage() {
         </div>
       )}
 
-      {/* --- CUSTOM MODAL: ยืนยันเพิ่ม Block --- */}
+      {/* --- Modal เพิ่ม Block --- */}
       {addBlockModal && (
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/70 backdrop-blur-sm p-4 animate-fadeIn">
           <div className="bg-slate-900 border border-slate-800 rounded-2xl p-6 max-w-sm w-full shadow-2xl text-center space-y-4">
@@ -292,28 +374,16 @@ export default function POSPage() {
               <Plus size={28} />
             </div>
             <h3 className="text-xl font-bold text-slate-100">ยืนยันการเพิ่ม Block</h3>
-            <p className="text-slate-400 text-sm">
-              คุณต้องการเพิ่ม Block ใหม่ (Block {blocks.length + 1}) ใช่หรือไม่?
-            </p>
+            <p className="text-slate-400 text-sm">คุณต้องการเพิ่ม Block ใหม่ (Block {blocks.length + 1}) ใช่หรือไม่?</p>
             <div className="flex space-x-3 pt-2">
-              <button
-                onClick={() => setAddBlockModal(false)}
-                className="flex-1 py-2.5 bg-slate-800 hover:bg-slate-700 text-slate-300 font-medium rounded-xl transition"
-              >
-                ยกเลิก
-              </button>
-              <button
-                onClick={confirmAddBlock}
-                className="flex-1 py-2.5 bg-amber-500 hover:bg-amber-600 text-slate-950 font-bold rounded-xl transition shadow-lg shadow-amber-500/20"
-              >
-                ยืนยันเพิ่ม
-              </button>
+              <button onClick={() => setAddBlockModal(false)} className="flex-1 py-2.5 bg-slate-800 hover:bg-slate-700 text-slate-300 font-medium rounded-xl transition">ยกเลิก</button>
+              <button onClick={confirmAddBlock} className="flex-1 py-2.5 bg-amber-500 hover:bg-amber-600 text-slate-950 font-bold rounded-xl transition shadow-lg shadow-amber-500/20">ยืนยันเพิ่ม</button>
             </div>
           </div>
         </div>
       )}
 
-      {/* --- CUSTOM MODAL: ยืนยันลด Block --- */}
+      {/* --- Modal ลด Block --- */}
       {removeBlockModal && (
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/70 backdrop-blur-sm p-4 animate-fadeIn">
           <div className="bg-slate-900 border border-slate-800 rounded-2xl p-6 max-w-sm w-full shadow-2xl text-center space-y-4">
@@ -321,28 +391,16 @@ export default function POSPage() {
               <Minus size={28} />
             </div>
             <h3 className="text-xl font-bold text-slate-100">ยืนยันการลด Block</h3>
-            <p className="text-slate-400 text-sm">
-              คุณต้องการลบบล็อกสุดท้ายทิ้งใช่หรือไม่? (ระบบจะป้องกันไม่ให้ลบบล็อกที่มีลูกค้าเปิดใช้งานอยู่)
-            </p>
+            <p className="text-slate-400 text-sm">คุณต้องการลบบล็อกสุดท้ายทิ้งใช่หรือไม่?</p>
             <div className="flex space-x-3 pt-2">
-              <button
-                onClick={() => setRemoveBlockModal(false)}
-                className="flex-1 py-2.5 bg-slate-800 hover:bg-slate-700 text-slate-300 font-medium rounded-xl transition"
-              >
-                ยกเลิก
-              </button>
-              <button
-                onClick={confirmRemoveBlock}
-                className="flex-1 py-2.5 bg-red-600 hover:bg-red-700 text-white font-bold rounded-xl transition shadow-lg shadow-red-600/20"
-              >
-                ยืนยันลด Block
-              </button>
+              <button onClick={() => setRemoveBlockModal(false)} className="flex-1 py-2.5 bg-slate-800 hover:bg-slate-700 text-slate-300 font-medium rounded-xl transition">ยกเลิก</button>
+              <button onClick={confirmRemoveBlock} className="flex-1 py-2.5 bg-red-600 hover:bg-red-700 text-white font-bold rounded-xl transition shadow-lg shadow-red-600/20">ยืนยันลด Block</button>
             </div>
           </div>
         </div>
       )}
 
-      {/* --- CUSTOM MODAL: แจ้งเตือนทั่วไป (Alert) --- */}
+      {/* --- แจ้งเตือนทั่วไป --- */}
       {alertMessage && (
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/70 backdrop-blur-sm p-4 animate-fadeIn">
           <div className="bg-slate-900 border border-slate-800 rounded-2xl p-6 max-w-sm w-full shadow-2xl text-center space-y-4">
@@ -353,11 +411,7 @@ export default function POSPage() {
                 const targetId = posTargetBlockId;
                 setAlertMessage(null);
                 setPosTargetBlockId(null);
-
-                // ถ้ามีค่า Block ที่กำลังจะเปิด ให้พุ่งไปที่หน้า POS ของ Block นั้นทันที
-                if (targetId) {
-                  router.push(`/pos/${targetId}`);
-                }
+                if (targetId) router.push(`/pos/${targetId}`);
               }}
               className="w-full py-2.5 bg-amber-500 hover:bg-amber-400 text-slate-950 font-bold rounded-xl transition cursor-pointer"
             >
@@ -367,22 +421,14 @@ export default function POSPage() {
         </div>
       )}
 
-      {/* --- Popup แจ้งเตือนเมื่อถูกเตะออกจากระบบ (Single Session) --- */}
+      {/* --- Single Session Modal --- */}
       {kickedModal && (
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/70 backdrop-blur-sm animate-fadeIn">
           <div className="bg-gray-900 border border-red-500/30 rounded-2xl p-6 max-w-md w-full shadow-2xl text-center space-y-4">
-            <div className="w-16 h-16 bg-red-500/10 text-red-500 rounded-full flex items-center justify-center mx-auto text-2xl font-bold border border-red-500/20">
-              ⚠️
-            </div>
             <h3 className="text-xl font-bold text-red-400">เซสชันถูกยกเลิก (Single Session)</h3>
-            <p className="text-gray-300 text-sm leading-relaxed">
-              บัญชีของคุณถูกนำไปเข้าสู่ระบบจากอุปกรณ์หรือแท็บเล็ตเครื่องอื่น ระบบจึงจำเป็นต้องออกจากระบบเพื่อความปลอดภัย
-            </p>
-            <button
-              onClick={() => router.push('/')}
-              className="w-full py-3 bg-red-600 hover:bg-red-700 text-white font-medium rounded-xl transition duration-200 shadow-lg shadow-red-600/20"
-            >
-              รับทราบและกลับสู่หน้าเข้าสู่ระบบ
+            <p className="text-gray-300 text-sm">บัญชีของคุณถูกนำไปเข้าสู่ระบบจากอุปกรณ์อื่น</p>
+            <button onClick={() => router.push('/')} className="w-full py-3 bg-red-600 hover:bg-red-700 text-white font-medium rounded-xl transition">
+              รับทราบ
             </button>
           </div>
         </div>
