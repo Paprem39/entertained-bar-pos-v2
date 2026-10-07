@@ -1,11 +1,12 @@
 'use client'
 
-import { useEffect, useState } from 'react'
+import { useEffect, useState, Suspense } from 'react'
 import { useRouter, useSearchParams } from 'next/navigation'
 import { Plus, Minus, Users, Clock, CheckCircle2, X, Tag } from 'lucide-react'
 import { supabase } from '../supabase'
 
-export default function POSPage() {
+// 1. สร้างคอมโพเนนต์ย่อยสำหรับจัดการ Logic ของหน้า POS ทั้งหมด
+function POSContent() {
   const [user, setUser] = useState<any>(null)
   const [kickedModal, setKickedModal] = useState(false)
   const router = useRouter()
@@ -503,5 +504,14 @@ export default function POSPage() {
         </div>
       )}
     </div>
+  )
+}
+
+// 2. Export หน้าหลักโดยห่อหุ้มด้วย Suspense เพื่อแก้ปัญหา Prerender Error บน Vercel
+export default function POSPage() {
+  return (
+    <Suspense fallback={<div className="flex items-center justify-center min-h-[400px] text-amber-400 font-medium">กำลังโหลด...</div>}>
+      <POSContent />
+    </Suspense>
   )
 }
