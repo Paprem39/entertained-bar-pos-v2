@@ -1,46 +1,50 @@
 Entity 1 : User 
 id 
 username 
-passwordHash 
-pinHash
-displayName
+password_hash 
+pin_hash
+display_name
 role
-isActive
-lastLoginAt
-createdAt 
-updatedAt 
+is_active
+last_login_at
+created_at 
+updated_at 
+approved_at
+session_token
 
 Entity 2 : UserSession
 id
-userId
-loginAt
-logoutAt
-isOnline
-createdAt
-updatedAt
+user_id
+login_at
+logout_at
+is_online
+created_at
+updated_at
+ip_address
+user_agent
 
 Entity 3 : Category
 id
 name
 icon
 color
-sortOrder
-isActive
-createdAt
-updatedAt
+sort_order
+is_active
+created_at
+updated_at
 
 Entity 4 : Product
 id
-categoryId
+category_id
 name
-normalPrice
-tournamentPrice ⭐
-allowMixer
-isActive
-createdAt
-updatedAt
+normal_price
+tournament_price 
+allow_mixer
+is_active
+created_at
+updated_at
 
-Entity 5 : Bill
+Entity 5 : bills
 id
 business_session_id
 bill_number
@@ -71,146 +75,165 @@ added_by_user_id
 created_at
 updated_at
 
-Entity 7 : Payment
+Entity 7 : payments
 id
-billId
-paymentMethod
+bill_id
+payment_method
 amount
-receivedAmount
-changeAmount
-paymentNote
-paidAt
-receivedByUserId
-createdAt
+received_amount
+change_amount
+payment_note
+paid_at
+received_by_user_id
+created_at
 
 Entity 8 : AuditLog
 id
-userId
+user_id
 action
-entityType
-entityId
-targetName
+entity_type
+entity_id
+target_name
 description
-oldValue
-newValue
-ipAddress (Optional)
-deviceInfo (Optional)
-sessionId (Optional)
-createdAt
+old_value
+new_value
+ip_address (Optional)
+device_info (Optional)
+session_id (Optional)
+created_at
 
 Entity 9 : Stock
 id
-productId
-currentQty
-minimumQty
-lastAdjustedAt
-updatedByUserId
-createdAt
-updatedAt
+product_id
+current_qty
+minimum_qty
+last_adjusted_at
+updated_by_user_id
+created_at
+updated_at
 
 Entity 10 : StockMovement
 id
-stockId
-productId
-userId
-movementType
+stock_id
+product_id
+user_id
+movement_type
 reason
 quantity
-beforeQty
-afterQty
-referenceType
-referenceId
+before_qty
+after_qty
+reference_type
+reference_id
 note
-createdAt
+created_at
 
 Entity 11 : OrderRequest
 id
-billId
-requestedByUserId
-approvedByUserId (Nullable)
+bill_id
+requested_by_user_id
+approved_by_user_id (Nullable)
 status
 note
-approvedAt
-createdAt
-updatedAt
+approved_at
+created_at
+updated_at
 
-Entity 12 : OrderRequestItem
+Entity 12 : order_request_items
 id
-orderRequestId
-productId
+order_request_id
+product_id
 quantity
 note
-createdAt
-updatedAt
+created_at
+updated_at
 
 Entity 13 : SystemSetting
 id
 key
 value
 description
-updatedByUserId
-updatedAt
+updated_by_user_id
+updated_at
 
-Entity 14 : ExpenseCategory
+Entity 14 : expense_categories
 id
 name
 icon
 color
-isFavorite
-sortOrder
-isActive
-createdAt
-updatedAt
+is_favorite
+sort_order
+is_active
+created_at
+updated_at
 
-Entity 15 : Expense
+Entity 15 : expenses
 id
-expenseCategoryId
+business_session_id
+expense_category_id
 amount
 note
-paidTo
-expenseDate
-createdByUserId
-createdAt
-updatedAt
-businessSessionId
+paid_to
+expense_date
+created_by_user_id
+created_at
+updated_at
 
-Entity 16 : DailyClosingSnapshot
+
+Entity 16 : daily_closing_snapshots
 id
-businessSessionId
-totalBills
-totalSales
-cashAmount
-transferAmount
-totalExpense
-staffDrinkAmount
-netCashRemaining
-createdAt
-updatedAt
+business_session_id
+total_bills
+total_sales
+cash_amount
+transfer_amount
+total_expense
+staff_drink_amount
+net_cash_remaining
+created_at
+updated_at
 
 Entity 17 : BusinessSession
 id
-businessDate
-openedAt
-closedAt
+business_date
+opened_at
+closed_at
 status
-openedByUserId
-closedByUserId
-createdAt
-updatedAt
+opened_by_user_id
+closed_by_user_id
+created_at
+updated_at
 
 Entity 18 : ProductMixer
 id
-productId
-mixerProductId
-createdAt
-updatedAt
+product_id
+mixer_product_id
+created_at
+updated_at
 
 Entity 19 : BillItemMixer
 id
-billItemId
-mixerProductId
-mixerName
-createdAt
+bill_item_id
+mixer_product_id
+mixer_name
+created_at
+
+Entity 20 : pos_blocks
+id
+name
+status
+customer
+bill_code
+total
+time
+
+Entity 21 : pos_sessions
+id
+user_id
+terminal_name
+status
+logged_in_at
+
+
 
 
 

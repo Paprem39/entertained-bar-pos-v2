@@ -1,18 +1,40 @@
 'use client'
 
 import { useEffect, useState } from 'react'
-import { useRouter } from 'next/navigation'
-import { Plus, Minus, Users, Clock, CheckCircle2, X } from 'lucide-react'
+import { useRouter, useSearchParams } from 'next/navigation'
+import { Plus, Minus, Users, Clock, CheckCircle2, X, Tag } from 'lucide-react'
 import { supabase } from '../supabase'
 
 export default function POSPage() {
   const [user, setUser] = useState<any>(null)
   const [kickedModal, setKickedModal] = useState(false)
   const router = useRouter()
+  const searchParams = useSearchParams()
 
   // State สำหรับเก็บข้อมูล Block ทั้งหมดจาก Supabase
   const [blocks, setBlocks] = useState<any[]>([])
   const [loading, setLoading] = useState(true)
+
+  // อ่านค่า mode จาก URL มาเป็นค่าเริ่มต้นทันที
+  const modeParam = searchParams.get('mode')
+  const [priceMode, setPriceMode] = useState<'normal' | 'tournament'>(
+    modeParam === 'tournament' ? 'tournament' : 'normal'
+  )
+
+  // อัปเดต state ตาม URL หากมีการเปลี่ยนแปลงภายนอก
+  useEffect(() => {
+    if (modeParam === 'tournament') {
+      setPriceMode('tournament')
+    } else {
+      setPriceMode('normal')
+    }
+  }, [modeParam])
+
+  // ฟังก์ชันเปลี่ยนโหมด พร้อมอัปเดต URL ทันทีโดยไม่รีเฟรชหน้าเว็บ
+  const handlePriceModeChange = (mode: 'normal' | 'tournament') => {
+    setPriceMode(mode)
+    router.replace(`/pos?mode=${mode}`, { scroll: false })
+  }
 
   // State สำหรับควบคุม Custom Modal ต่างๆ
   const [openBillModal, setOpenBillModal] = useState(false)
@@ -24,7 +46,7 @@ export default function POSPage() {
   const [removeBlockModal, setRemoveBlockModal] = useState(false)
   const [alertMessage, setAlertMessage] = useState<string | null>(null)
 
-  // 1. ตรวจสอบ Session และ ดึงข้อมูล Blocks จาก Supabase เมื่อโหลดหน้าเว็บ
+  // 1. ตรวจสอบ Session และ ดึงข้อมูล Blocks พร้อมคำนวณยอดเงินจากตาราง bills
   useEffect(() => {
     const checkSession = async () => {
       try {
@@ -48,7 +70,7 @@ export default function POSPage() {
     return () => clearInterval(interval)
   }, [])
 
-  // ฟังก์ชันดึงข้อมูล Block จาก Supabase
+  // ฟังก์ชันดึงข้อมูล Block และดึงยอดรวมจากตาราง bills มาแสดงผล
   const fetchBlocksFromDB = async () => {
     try {
       const { data, error } = await supabase
@@ -59,9 +81,36 @@ export default function POSPage() {
       if (error) throw error
 
       if (data && data.length > 0) {
-        setBlocks(data)
+        const updatedBlocks = await Promise.all(
+          data.map(async (block) => {
+            if (block.status === 'occupied' && block.bill_code && block.bill_code !== '-') {
+              const { data: billData } = await supabase
+                .from('bills')
+                .select('id')
+                .eq('bill_number', block.bill_code)
+                .single()
+
+              if (billData) {
+                const { data: itemsData } = await supabase
+                  .from('bill_items')
+                  .select('unit_price, qty')
+                  .eq('bill_id', billData.id)
+
+                if (itemsData && itemsData.length > 0) {
+                  const calculatedTotal = itemsData.reduce(
+                    (sum, item) => sum + (item.unit_price || 0) * (item.qty || 0),
+                    0
+                  )
+                  return { ...block, total: calculatedTotal }
+                }
+              }
+            }
+            return block;
+          })
+        );
+
+        setBlocks(updatedBlocks)
       } else {
-        // ถ้ายังไม่มีข้อมูลใน DB ให้สร้างเริ่มต้น 20 บล็อกแรกอัตโนมัติ
         await initializeDefaultBlocks()
       }
     } catch (err) {
@@ -102,7 +151,6 @@ export default function POSPage() {
       time: ''
     };
 
-    // บันทึกลง Supabase
     const { error } = await supabase.from('pos_blocks').insert([newBlock]);
     if (error) {
       console.error('Error adding block:', error);
@@ -127,7 +175,6 @@ export default function POSPage() {
       return;
     }
 
-    // ลบออกจาก Supabase
     const { error } = await supabase.from('pos_blocks').delete().eq('id', lastBlock.id);
     if (error) {
       console.error('Error removing block:', error);
@@ -138,7 +185,7 @@ export default function POSPage() {
     setRemoveBlockModal(false);
   };
 
-  // คลิกที่ Block เพื่อเปิดบิลหรือเข้าบิล
+  // คลิกที่ Block เพื่อเปิดบิลหรือเข้าบิล (พ่วงส่ง priceMode ไปด้วยทาง query parameter)
   const handleBlockClick = (blockId: number, status: string) => {
     const targetBlock = blocks.find(b => b.id === blockId);
     
@@ -148,11 +195,11 @@ export default function POSPage() {
       setOpenBillModal(true);
     } else {
       setPosTargetBlockId(blockId);
-      setAlertMessage(`กำลังเข้าสู่หน้าขายสินค้าของ ${targetBlock?.name} | รหัสบิล: [${targetBlock?.bill_code}] | ลูกค้า: ${targetBlock?.customer}`);
+      setAlertMessage(`กำลังเข้าสู่หน้าขายสินค้าของ ${targetBlock?.name} | โหมดราคา: [${priceMode === 'tournament' ? 'ราคาวันแข่ง' : 'ราคาปกติ'}] | รหัสบิล: [${targetBlock?.bill_code}]`);
     }
   };
 
-  // ยืนยันเปิดบิลด้วยชื่อลูกค้า (คำนวณลำดับบิลใหม่ตามวันปัจจุบัน)
+  // ยืนยันเปิดบิลด้วยชื่อลูกค้า
   const handleOpenBillSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!selectedBlockId || !customerInput.trim()) return;
@@ -161,13 +208,12 @@ export default function POSPage() {
     const day = String(now.getDate()).padStart(2, '0');
     const month = String(now.getMonth() + 1).padStart(2, '0');
     const year = now.getFullYear();
-    const currentDateStr = `${day}${month}${year}`; // รูปแบบ DDMMYYYY
+    const currentDateStr = `${day}${month}${year}`;
 
     const hours = String(now.getHours()).padStart(2, '0');
     const minutes = String(now.getMinutes()).padStart(2, '0');
     const timeStr = `${hours}:${minutes}`;
 
-    // 1. ดึงข้อมูลบล็อกทั้งหมดที่มีอยู่ในปัจจุบัน เพื่อเช็คว่าวันนี้มีการเปิดบิลไปกี่บิลแล้ว
     const { data: existingBlocks, error: fetchError } = await supabase
       .from('pos_blocks')
       .select('bill_code');
@@ -175,10 +221,8 @@ export default function POSPage() {
     let todayBillCount = 0;
 
     if (!fetchError && existingBlocks) {
-      // กรองดูว่าบิลไหนที่มีวันที่ตรงกับวันนี้แล้วบ้าง เพื่อหาลำดับถัดไป
       existingBlocks.forEach(b => {
         if (b.bill_code) {
-          // รูปแบบบิลคือ [seq]-[DDMMYYYY]-[HHMM] เราจะดึงส่วนตรงกลางมาเช็ควันที่
           const parts = b.bill_code.split('-');
           if (parts.length === 3 && parts[1] === currentDateStr) {
             todayBillCount++;
@@ -187,11 +231,8 @@ export default function POSPage() {
       });
     }
 
-    // 2. ลำดับถัดไปของวันนี้ (ถ้าวันนี้ยังไม่มี ให้เริ่มที่ 1)
     const nextSeq = todayBillCount + 1;
     const seqStr = String(nextSeq).padStart(2, '0');
-
-    // 3. ประกอบร่างรหัสบิลใหม่ เช่น "01-06102026-0214"
     const generatedBillCode = `${seqStr}-${currentDateStr}-${hours}${minutes}`;
 
     const updatedData = {
@@ -202,7 +243,6 @@ export default function POSPage() {
       time: timeStr
     };
 
-    // อัปเดตข้อมูลลง Supabase
     const { error } = await supabase
       .from('pos_blocks')
       .update(updatedData)
@@ -230,7 +270,7 @@ export default function POSPage() {
 
   return (
     <div className="space-y-6 text-white max-w-7xl mx-auto">
-      {/* ส่วนหัวข้อต้อนรับ & ควบคุม Block */}
+      {/* ส่วนหัวข้อต้อนรับ & ควบคุม Block พร้อมปุ่มสลับโหมดราคา */}
       <div className="bg-slate-900 border border-slate-800 rounded-2xl p-6 flex flex-col md:flex-row items-center justify-between shadow-xl gap-4">
         <div>
           <h1 className="text-2xl font-bold bg-gradient-to-r from-amber-400 to-orange-500 bg-clip-text text-transparent">
@@ -242,22 +282,52 @@ export default function POSPage() {
           </p>
         </div>
 
-        {/* ปุ่มเพิ่ม/ลด Block */}
-        <div className="flex items-center space-x-3 w-full md:w-auto justify-end">
-          <button 
-            onClick={() => setRemoveBlockModal(true)}
-            className="px-3 py-2 bg-slate-800 hover:bg-slate-700 text-slate-300 rounded-xl transition flex items-center space-x-1 border border-slate-700 text-sm font-medium cursor-pointer"
-          >
-            <Minus size={16} />
-            <span>ลด Block</span>
-          </button>
-          <button 
-            onClick={() => setAddBlockModal(true)}
-            className="px-4 py-2 bg-amber-500 hover:bg-amber-600 text-slate-950 font-bold rounded-xl transition shadow-lg shadow-amber-500/20 flex items-center space-x-1 text-sm cursor-pointer"
-          >
-            <Plus size={18} />
-            <span>เพิ่ม Block</span>
-          </button>
+        {/* จุดที่เพิ่ม: ปุ่มสลับโหมดราคาปกติ / ราคาวันแข่ง และปุ่มเพิ่ม-ลด Block */}
+        <div className="flex flex-wrap items-center gap-3 justify-end w-full md:w-auto">
+          
+          {/* ส่วนสลับโหมดราคา (Normal vs Tournament) */}
+          <div className="flex items-center bg-slate-950 p-1 rounded-xl border border-slate-800 shadow-inner">
+            <button
+              onClick={() => handlePriceModeChange('normal')}
+              className={`px-3.5 py-2 rounded-lg text-xs font-bold transition flex items-center space-x-1.5 cursor-pointer ${
+                priceMode === 'normal'
+                  ? 'bg-amber-500 text-slate-950 shadow-md'
+                  : 'text-slate-400 hover:text-slate-200'
+              }`}
+            >
+              <Tag size={14} />
+              <span>ราคาปกติ (Normal)</span>
+            </button>
+            <button
+              onClick={() => handlePriceModeChange('tournament')}
+              className={`px-3.5 py-2 rounded-lg text-xs font-bold transition flex items-center space-x-1.5 cursor-pointer ${
+                priceMode === 'tournament'
+                  ? 'bg-orange-600 text-white shadow-md'
+                  : 'text-slate-400 hover:text-slate-200'
+              }`}
+            >
+              <Tag size={14} />
+              <span>ราคาวันแข่ง (Tournament)</span>
+            </button>
+          </div>
+
+          <div className="flex items-center space-x-2">
+            <button 
+              onClick={() => setRemoveBlockModal(true)}
+              className="px-3 py-2.5 bg-slate-800 hover:bg-slate-700 text-slate-300 rounded-xl transition flex items-center space-x-1 border border-slate-700 text-sm font-medium cursor-pointer"
+            >
+              <Minus size={16} />
+              <span>ลด Block</span>
+            </button>
+            <button 
+              onClick={() => setAddBlockModal(true)}
+              className="px-4 py-2.5 bg-amber-500 hover:bg-amber-600 text-slate-950 font-bold rounded-xl transition shadow-lg shadow-amber-500/20 flex items-center space-x-1 text-sm cursor-pointer"
+            >
+              <Plus size={18} />
+              <span>เพิ่ม Block</span>
+            </button>
+          </div>
+
         </div>
       </div>
 
@@ -283,6 +353,7 @@ export default function POSPage() {
                 }`}>
                   {isOccupied ? <><Users size={12} /><span>มีลูกค้า</span></> : <><CheckCircle2 size={12} /><span>ว่าง</span></>}
                 </span>
+
               </div>
 
               <div className="my-2">
@@ -316,9 +387,7 @@ export default function POSPage() {
         })}
       </div>
 
-      {/* --- MODAL และ Popup ส่วนอื่นๆ (คงเดิมตามโค้ดคุณ) --- */}
-      {/* ... โหมด Modal เปิดบิล / เพิ่ม-ลด Block / แจ้งเตือน เหมือนเดิม ... */}
-
+      {/* --- Modal เปิดบิล --- */}
       {openBillModal && (
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/70 backdrop-blur-sm p-4 animate-fadeIn">
           <div className="bg-slate-900 border border-slate-800 rounded-2xl p-6 max-w-md w-full shadow-2xl space-y-4">
@@ -400,7 +469,7 @@ export default function POSPage() {
         </div>
       )}
 
-      {/* --- แจ้งเตือนทั่วไป --- */}
+      {/* --- แจ้งเตือนทั่วไป (ส่ง query param priceMode ไปยังหน้าย่อยเมื่อกดเข้า block) --- */}
       {alertMessage && (
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/70 backdrop-blur-sm p-4 animate-fadeIn">
           <div className="bg-slate-900 border border-slate-800 rounded-2xl p-6 max-w-sm w-full shadow-2xl text-center space-y-4">
@@ -411,7 +480,7 @@ export default function POSPage() {
                 const targetId = posTargetBlockId;
                 setAlertMessage(null);
                 setPosTargetBlockId(null);
-                if (targetId) router.push(`/pos/${targetId}`);
+                if (targetId) router.push(`/pos/${targetId}?mode=${priceMode}`);
               }}
               className="w-full py-2.5 bg-amber-500 hover:bg-amber-400 text-slate-950 font-bold rounded-xl transition cursor-pointer"
             >

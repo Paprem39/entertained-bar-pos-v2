@@ -1,7 +1,7 @@
 'use client';
 
 import React, { useState, useEffect } from 'react';
-import { useParams, useRouter } from 'next/navigation';
+import { useParams, useRouter, useSearchParams } from 'next/navigation';
 import { supabase } from '../../supabase';
 import AddProductModal from './AddProductModal';
 import CheckoutModal from './CheckoutModal';
@@ -22,6 +22,8 @@ interface Product {
   id: string;
   name: string;
   price: number;
+  normal_price: number;
+  tournament_price: number;
   category_id: string;
   category: string;
   stock: number;
@@ -30,8 +32,13 @@ interface Product {
 
 export default function PosBlockDetailPage() {
   const params = useParams();
+  const searchParams = useSearchParams();
   const router = useRouter();
   
+  // เช็กโหมดปัจจุบันจาก URL (support ทั้ง ?mode=tournament และปกติ)
+  const modeParam = searchParams.get('mode');
+  const priceMode = modeParam === 'tournament' ? 'tournament' : 'normal';
+
   const [blockId, setBlockId] = useState<string>('');
   const [blockName, setBlockName] = useState<string>('');
   const [billNo, setBillNo] = useState<string>('');
@@ -149,7 +156,7 @@ export default function PosBlockDetailPage() {
   const [categories, setCategories] = useState<string[]>(['ทั้งหมด']);
   const [mixerList, setMixerList] = useState<string[]>([]);
 
-  // 3. ดึงสินค้า หมวดหมู่ และ Mixer จาก Supabase จริงๆ
+  // 3. ดึงสินค้า หมวดหมู่ และ Mixer จาก Supabase พร้อมดึง tournament_price และสลับราคาตาม mode
   const fetchSupabaseData = async () => {
     try {
       const { data: catData, error: catError } = await supabase
@@ -164,12 +171,14 @@ export default function PosBlockDetailPage() {
       catData?.forEach((c: any) => { catMap[c.id] = c.name; });
       setCategories(['ทั้งหมด', ...(catData?.map((c: any) => c.name) || [])]);
 
+      // เพิ่ม tournament_price เข้าไปใน query เลือกข้อมูลจากตาราง products
       const { data: prodData, error: prodError } = await supabase
         .from('products')
         .select(`
           id,
           name,
           normal_price,
+          tournament_price,
           category_id,
           is_active,
           categories ( name ),
@@ -184,10 +193,18 @@ export default function PosBlockDetailPage() {
         const minQty = p.stocks && p.stocks.length > 0 ? p.stocks[0].minimum_qty : 5;
         const categoryName = p.categories?.name || catMap[p.category_id] || 'อื่นๆ';
 
+        const normalPrice = p.normal_price || 0;
+        const tournamentPrice = p.tournament_price ?? normalPrice; // ถ้าไม่มีราคาแข่งให้ fallback ใช้ราคาปกติ
+
+        // เลือกราคาหลักที่จะแสดงผลตามโหมด URL ปัจจุบันทันที
+        const activePrice = priceMode === 'tournament' ? tournamentPrice : normalPrice;
+
         return {
           id: p.id,
           name: p.name,
-          price: p.normal_price,
+          price: activePrice,
+          normal_price: normalPrice,
+          tournament_price: tournamentPrice,
           category_id: p.category_id,
           category: categoryName,
           stock: stockQty,
@@ -210,7 +227,7 @@ export default function PosBlockDetailPage() {
 
   useEffect(() => {
     fetchSupabaseData();
-  }, []);
+  }, [priceMode]); // โหลดข้อมูลใหม่หรืออัปเดตราคาอัตโนมัติเมื่อโหมดเปลี่ยน
 
   const [isAddModalOpen, setIsAddModalOpen] = useState<boolean>(false);
   const [isCheckoutModalOpen, setIsCheckoutModalOpen] = useState<boolean>(false);
@@ -458,7 +475,7 @@ export default function PosBlockDetailPage() {
       <div className="flex items-center justify-between px-8 py-5 bg-slate-900 border-b border-slate-800 shadow-md">
         <div className="flex items-center space-x-6">
           <button
-            onClick={() => router.push('/pos')}
+            onClick={() => router.push(`/pos?mode=${priceMode}`)}
             className="px-5 py-3 bg-slate-800 hover:bg-slate-700 text-slate-200 rounded-xl text-sm font-bold transition cursor-pointer flex items-center space-x-2"
           >
             <span>← กลับหน้าภาพรวม Block</span>
@@ -468,6 +485,14 @@ export default function PosBlockDetailPage() {
               <h1 className="text-2xl font-black text-amber-400">กำลังให้บริการ: {blockName || `Block ${blockId}`}</h1>
               <span className="bg-amber-500/20 text-amber-300 text-sm px-3 py-1 rounded-full border border-amber-500/30 font-bold">
                 ลูกค้า: {customerName}
+              </span>
+              {/* ป้ายแสดงสถานะโหมดราคาปัจจุบัน */}
+              <span className={`text-xs px-3 py-1 rounded-full border font-bold ${
+                priceMode === 'tournament' 
+                  ? 'bg-orange-600/20 text-orange-400 border-orange-500/30' 
+                  : 'bg-amber-500/20 text-amber-400 border-amber-500/30'
+              }`}>
+                {priceMode === 'tournament' ? '🏆 ราคาวันแข่ง (Tournament)' : '🏷️ ราคาปกติ (Normal)'}
               </span>
             </div>
             <div className="flex items-center space-x-4 text-xs text-slate-400 mt-1.5 font-medium">

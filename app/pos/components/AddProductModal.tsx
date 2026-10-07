@@ -1,11 +1,14 @@
 'use client';
 
-import React from 'react';
+import React, { useState, useEffect } from 'react';
+import { useSearchParams } from 'next/navigation';
 
 interface Product {
   id: string;
   name: string;
   price: number;
+  normal_price: number;
+  tournament_price: number;
   category_id: string;
   category: string;
   stock: number;
@@ -51,7 +54,28 @@ export default function AddProductModal({
   setSelectedMixers,
   handleConfirmAddProduct,
 }: AddProductModalProps) {
+  // ดึงค่า mode จาก URL โดยตรงแบบเรียลไทม์
+  const searchParams = useSearchParams();
+  const modeParam = searchParams.get('mode');
+  const [priceMode, setPriceMode] = useState<'normal' | 'tournament'>('normal');
+
+  useEffect(() => {
+    if (modeParam === 'tournament') {
+      setPriceMode('tournament');
+    } else {
+      setPriceMode('normal');
+    }
+  }, [modeParam]);
+
   if (!isOpen) return null;
+
+  // ฟังก์ชันเลือกราคาตามโหมดที่อ่านได้จาก URL
+  const getProductPrice = (product: Product) => {
+    if (priceMode === 'tournament') {
+      return product.tournament_price ?? product.price ?? 0;
+    }
+    return product.normal_price ?? product.price ?? 0;
+  };
 
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/80 backdrop-blur-sm p-4">
@@ -60,7 +84,17 @@ export default function AddProductModal({
         {/* Header Modal */}
         <div className="px-8 py-5 bg-slate-850 border-b border-slate-800 flex justify-between items-center">
           <div>
-            <h3 className="text-xl font-black text-amber-400">🛒 เลือกสินค้าจากฐานข้อมูล Supabase (Block {blockId})</h3>
+            <div className="flex items-center space-x-3">
+              <h3 className="text-xl font-black text-amber-400">🛒 เลือกสินค้าจากฐานข้อมูล Supabase (Block {blockId})</h3>
+              {/* ป้ายแสดงโหมดราคาที่ดึงมาจาก URL จริงๆ */}
+              <span className={`px-3 py-1 rounded-full text-xs font-bold ${
+                priceMode === 'tournament' 
+                  ? 'bg-orange-600/20 text-orange-400 border border-orange-500/30' 
+                  : 'bg-amber-500/20 text-amber-400 border border-amber-500/30'
+              }`}>
+                {priceMode === 'tournament' ? '🏆 ราคาวันแข่ง (Tournament)' : '🏷️ ราคาปกติ (Normal)'}
+              </span>
+            </div>
             <p className="text-xs text-slate-400 mt-0.5">ตัดสต็อกจริงทันทีแบบเรียลไทม์ทุก Block พร้อมระบบเช็ก Min และบังคับเลือก Mixer</p>
           </div>
           <button 
@@ -109,11 +143,12 @@ export default function AddProductModal({
                 const isOutOfStock = product.stock <= 0;
                 const isLowStock = !isOutOfStock && product.stock <= product.minStock;
                 const isSelected = selectedProductForAdd?.id === product.id;
+                const currentPrice = getProductPrice(product); // คำนวณราคาตามโหมดที่ได้จาก URL
 
                 return (
                   <div
                     key={product.id}
-                    onClick={() => handleSelectProduct(product)}
+                    onClick={() => handleSelectProduct({ ...product, price: currentPrice })}
                     className={`p-4 rounded-2xl border transition flex flex-col justify-between cursor-pointer ${
                       isOutOfStock 
                         ? 'bg-slate-950/40 border-slate-900 opacity-50 cursor-not-allowed' 
@@ -127,7 +162,7 @@ export default function AddProductModal({
                         <span className="text-[10px] uppercase font-bold tracking-wider text-amber-500 bg-amber-500/10 px-2 py-0.5 rounded-md">
                           {product.category}
                         </span>
-                        <span className="text-amber-400 font-black text-base">฿{product.price}</span>
+                        <span className="text-amber-400 font-black text-base">฿{currentPrice}</span>
                       </div>
                       <h4 className="font-bold text-slate-100 text-sm mt-2 line-clamp-1">{product.name}</h4>
                     </div>
@@ -187,7 +222,7 @@ export default function AddProductModal({
                 </div>
 
                 {/* Mixer Selection */}
-                {(selectedProductForAdd.category.toLowerCase().includes('whiskey') || selectedProductForAdd.category.toLowerCase().includes('เหล้า')) && (
+                {(selectedProductForAdd.category?.toLowerCase().includes('whiskey') || selectedProductForAdd.category?.toLowerCase().includes('เหล้า')) && (
                   <div className="space-y-3 pt-4 border-t border-slate-900">
                     <label className="text-sm font-bold text-amber-400 block">เลือก Mixer (บังคับ/เพิ่มเติม):</label>
                     <div className="grid grid-cols-2 gap-2.5">
@@ -225,7 +260,7 @@ export default function AddProductModal({
               </div>
             )}
 
-            {/* Confirm Add Button (แก้ไขตรงนี้ให้ใช้ Backtick ถูกต้อง) */}
+            {/* Confirm Add Button */}
             <div className="pt-4 border-t border-slate-900">
               <button
                 disabled={!selectedProductForAdd}
