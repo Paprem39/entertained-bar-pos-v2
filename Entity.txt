@@ -42,33 +42,34 @@ updatedAt
 
 Entity 5 : Bill
 id
-billNumber
-billName
+business_session_id
+bill_number
+bill_name
 subtotal
-totalAmount
-discountAmount
+total_amount
+discount_amount
 status
-openedAt
-closedAt
-createdByUserId
-createdAt
-updatedAt
-businessSessionId
+opened_at
+closed_at
+created_by_user_id
+created_at
+updated_at
 
-Entity 6 : BillItem
+
+Entity 6 : bill_items
 id
-billId
-productId
-productName
+bill_id
+product_id
+product_name
 qty
-unitPrice
-lineTotal
-isStaffDrink
-staffDrinkFee
-staffDrinkRecipient
-addedByUserId
-createdAt
-updatedAt
+unit_price
+line_total
+is_staff_drink
+staff_drink_fee
+staff_drink_recipient
+added_by_user_id
+created_at
+updated_at
 
 Entity 7 : Payment
 id

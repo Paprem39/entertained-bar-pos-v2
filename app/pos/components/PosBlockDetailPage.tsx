@@ -11,8 +11,9 @@ interface BillItem {
   id: string;
   productId: string;
   name: string;
-  price: number;
-  quantity: number;
+  unitPrice: number;
+  qty: number;
+  lineTotal: number;
   category: string;
   mixers?: string[];
 }
@@ -38,14 +39,20 @@ export default function PosBlockDetailPage() {
   const [openTime, setOpenTime] = useState<string>('');
   const [checkoutTime, setCheckoutTime] = useState<string>('');
   const [cashierName, setCashierName] = useState<string>('กำลังโหลด...');
+  const [currentUserId, setCurrentUserId] = useState<string | null>(null);
 
-  // 1. ดึงข้อมูลชื่อพนักงานที่ Login ผ่าน API /api/auth ตาม layout.tsx
+  // State สำหรับจัดการ Popup ยืนยันการลบสินค้า
+  const [isDeleteModalOpen, setIsDeleteModalOpen] = useState<boolean>(false);
+  const [itemToDelete, setItemToDelete] = useState<BillItem | null>(null);
+
+  // 1. ดึงข้อมูลชื่อพนักงานและ ID ที่ Login ผ่าน API /api/auth ตาม layout.tsx
   const fetchCurrentCashier = async () => {
     try {
       const res = await fetch('/api/auth');
       const data = await res.json();
       if (data.authenticated && data.user) {
         setCashierName(data.user.display_name || data.user.name || 'พนักงาน');
+        setCurrentUserId(data.user.id || null);
       } else {
         setCashierName('ยังไม่ได้เข้าสู่ระบบ');
       }
@@ -70,13 +77,61 @@ export default function PosBlockDetailPage() {
       }
 
       if (data) {
+        const currentBillCode = data.bill_code && data.bill_code !== 'NULL' && data.bill_code !== 'EMPTY' ? data.bill_code : '-';
         setBlockName(data.name || `Block ${id}`);
         setCustomerName(data.customer && data.customer !== 'NULL' && data.customer !== 'EMPTY' ? data.customer : 'ยังไม่ระบุชื่อลูกค้า');
-        setBillNo(data.bill_code && data.bill_code !== 'NULL' && data.bill_code !== 'EMPTY' ? data.bill_code : '-');
+        setBillNo(currentBillCode);
         setOpenTime(data.time && data.time !== 'NULL' && data.time !== 'EMPTY' ? data.time : '-');
+
+        if (currentBillCode && currentBillCode !== '-') {
+          fetchBillAndItems(currentBillCode);
+        }
       }
     } catch (err) {
       console.error('Unexpected error fetching block details:', err);
+    }
+  };
+
+  // ฟังก์ชันดึงรายการสินค้าในบิลจากตาราง bills และ bill_items
+  const fetchBillAndItems = async (currentBillCode: string) => {
+    try {
+      const { data: billData, error: billError } = await supabase
+        .from('bills')
+        .select('id')
+        .eq('bill_number', currentBillCode)
+        .single();
+
+      if (billError || !billData) return;
+
+      const { data: itemsData, error: itemsError } = await supabase
+        .from('bill_items')
+        .select(`
+          id,
+          product_id,
+          product_name,
+          unit_price,
+          qty,
+          line_total,
+          bill_item_mixers ( mixer_name )
+        `)
+        .eq('bill_id', billData.id);
+
+      if (itemsError) throw itemsError;
+
+      const loadedItems: BillItem[] = (itemsData || []).map((item: any) => ({
+        id: item.id,
+        productId: item.product_id,
+        name: item.product_name,
+        unitPrice: item.unit_price || 0,
+        qty: item.qty || 0,
+        lineTotal: item.line_total || 0,
+        category: 'อื่นๆ',
+        mixers: item.bill_item_mixers?.map((m: any) => m.mixer_name) || []
+      }));
+
+      setItems(loadedItems);
+    } catch (err) {
+      console.error('Error fetching bill items from database:', err);
     }
   };
 
@@ -142,7 +197,6 @@ export default function PosBlockDetailPage() {
 
       setProductCatalog(formattedProducts);
 
-      // ดึงรายชื่อ Mixer จากฐานข้อมูลจริง
       const mixers = formattedProducts
         .filter(p => p.category.toLowerCase().includes('mixer') || p.category.toLowerCase().includes('มิกเซอร์'))
         .map(p => p.name);
@@ -173,8 +227,8 @@ export default function PosBlockDetailPage() {
   const [addQuantity, setAddQuantity] = useState<number>(1);
   const [selectedMixers, setSelectedMixers] = useState<string[]>([]);
 
-  const totalAmount = items.reduce((sum, item) => sum + item.price * item.quantity, 0);
-  const totalQuantity = items.reduce((sum, item) => sum + item.quantity, 0);
+  const totalAmount = items.reduce((sum, item) => sum + item.unitPrice * item.qty, 0);
+  const totalQuantity = items.reduce((sum, item) => sum + item.qty, 0);
   const cashNum = parseFloat(cashReceived) || 0;
   const changeAmount = cashNum - totalAmount;
 
@@ -214,41 +268,85 @@ export default function PosBlockDetailPage() {
       return;
     }
 
-    const newStockQty = selectedProductForAdd.stock - addQuantity;
-
     try {
-      const { error } = await supabase
-        .from('stocks')
-        .update({ current_qty: newStockQty })
-        .eq('product_id', selectedProductForAdd.id);
+      let currentBillId = '';
+      
+      const { data: existingBill, error: findBillErr } = await supabase
+        .from('bills')
+        .select('id')
+        .eq('bill_number', billNo)
+        .single();
 
-      if (error) throw error;
+      if (findBillErr || !existingBill) {
+        const { data: newBill, error: createBillErr } = await supabase
+          .from('bills')
+          .insert({
+            bill_number: billNo,
+            bill_name: `Block ${blockName || blockId} - ${customerName}`,
+            subtotal: 0,
+            total_amount: 0,
+            discount_amount: 0,
+            status: 'active',
+            opened_at: new Date().toISOString(),
+            created_by_user_id: currentUserId
+          })
+          .select('id')
+          .single();
+
+        if (createBillErr) throw createBillErr;
+        currentBillId = newBill.id;
+      } else {
+        currentBillId = existingBill.id;
+      }
 
       const isWhiskey = selectedProductForAdd.category.toLowerCase().includes('whiskey') || selectedProductForAdd.category.toLowerCase().includes('เหล้า');
       const finalItemName = isWhiskey && selectedMixers.length > 0 
         ? `${selectedProductForAdd.name} + ${selectedMixers.join(' + ')}` 
         : selectedProductForAdd.name;
 
-      setItems(prev => [
-        ...prev,
-        {
-          id: `${selectedProductForAdd.id}-${Date.now()}`,
-          productId: selectedProductForAdd.id,
-          name: finalItemName,
-          price: selectedProductForAdd.price,
-          quantity: addQuantity,
-          category: selectedProductForAdd.category,
-          mixers: selectedMixers
-        }
-      ]);
+      const calculatedLineTotal = selectedProductForAdd.price * addQuantity;
+
+      const { data: insertedItem, error: insertItemErr } = await supabase
+        .from('bill_items')
+        .insert({
+          bill_id: currentBillId,
+          product_id: selectedProductForAdd.id,
+          product_name: finalItemName,
+          qty: addQuantity,
+          unit_price: selectedProductForAdd.price,
+          line_total: calculatedLineTotal,
+          added_by_user_id: currentUserId
+        })
+        .select('id')
+        .single();
+
+      if (insertItemErr) throw insertItemErr;
+
+      if (isWhiskey && selectedMixers.length > 0 && insertedItem) {
+        const mixerRows = selectedMixers.map(mixerName => ({
+          bill_item_id: insertedItem.id,
+          mixer_name: mixerName
+        }));
+        const { error: mixerErr } = await supabase.from('bill_item_mixers').insert(mixerRows);
+        if (mixerErr) throw mixerErr;
+      }
+
+      const newStockQty = selectedProductForAdd.stock - addQuantity;
+      const { error: stockErr } = await supabase
+        .from('stocks')
+        .update({ current_qty: newStockQty })
+        .eq('product_id', selectedProductForAdd.id);
+
+      if (stockErr) throw stockErr;
 
       setIsAddModalOpen(false);
       setSelectedProductForAdd(null);
+      await fetchBillAndItems(billNo);
       fetchSupabaseData();
 
     } catch (err) {
-      console.error('Error updating stock:', err);
-      alert('เกิดข้อผิดพลาดในการตัดสต็อก');
+      console.error('Error saving bill item to database:', err);
+      alert('เกิดข้อผิดพลาดในการบันทึกข้อมูลลงฐานข้อมูล');
     }
   };
 
@@ -277,8 +375,8 @@ export default function PosBlockDetailPage() {
 
       setItems(prev =>
         prev
-          .map(item => (item.productId === productId ? { ...item, quantity: item.quantity + delta } : item))
-          .filter(item => item.quantity > 0)
+          .map(item => (item.productId === productId ? { ...item, qty: item.qty + delta, lineTotal: item.unitPrice * (item.qty + delta) } : item))
+          .filter(item => item.qty > 0)
       );
 
       fetchSupabaseData();
@@ -288,25 +386,46 @@ export default function PosBlockDetailPage() {
     }
   };
 
-  const handleDeleteItem = async (itemId: string, productId: string, quantity: number) => {
-    const targetProduct = productCatalog.find(p => p.id === productId);
-    if (!targetProduct) return;
+  // ฟังก์ชันเปิด Modal ยืนยันการลบรายการ
+  const handleOpenDeleteModal = (item: BillItem) => {
+    setItemToDelete(item);
+    setIsDeleteModalOpen(true);
+  };
 
-    const newStockQty = targetProduct.stock + quantity;
+  // ฟังก์ชันยืนยันการลบและคืนยอดกลับเข้าสต็อกจริง
+  const handleConfirmDelete = async () => {
+    if (!itemToDelete) return;
+
+    const targetProduct = productCatalog.find(p => p.id === itemToDelete.productId);
+    if (!targetProduct) {
+      setIsDeleteModalOpen(false);
+      return;
+    }
+
+    const newStockQty = targetProduct.stock + itemToDelete.qty;
 
     try {
-      const { error } = await supabase
+      const { error: stockErr } = await supabase
         .from('stocks')
         .update({ current_qty: newStockQty })
-        .eq('product_id', productId);
+        .eq('product_id', itemToDelete.productId);
 
-      if (error) throw error;
+      if (stockErr) throw stockErr;
 
-      setItems(prev => prev.filter(item => item.id !== itemId));
+      const { error: deleteItemErr } = await supabase
+        .from('bill_items')
+        .delete()
+        .eq('id', itemToDelete.id);
+
+      if (deleteItemErr) throw deleteItemErr;
+
+      setItems(prev => prev.filter(item => item.id !== itemToDelete.id));
+      setIsDeleteModalOpen(false);
+      setItemToDelete(null);
       fetchSupabaseData();
     } catch (err) {
       console.error('Error returning stock on delete:', err);
-      alert('เกิดข้อผิดพลาดในการคืนสต็อก');
+      alert('เกิดข้อผิดพลาดในการลบรายการสินค้า');
     }
   };
 
@@ -406,19 +525,22 @@ export default function PosBlockDetailPage() {
                 <div key={item.id} className="px-8 py-5 flex items-center justify-between hover:bg-slate-850/50 transition">
                   <div className="flex-1">
                     <h3 className="font-bold text-slate-100 text-lg">{item.name}</h3>
-                    <p className="text-xs text-amber-400 font-semibold mt-0.5">ราคาหน่วยละ ฿{item.price}</p>
+                    {item.mixers && item.mixers.length > 0 && (
+                      <p className="text-xs text-amber-300/80 mt-0.5">มิกเซอร์: {item.mixers.join(', ')}</p>
+                    )}
+                    <p className="text-xs text-amber-400 font-semibold mt-0.5">ราคาหน่วยละ ฿{item.unitPrice}</p>
                   </div>
 
                   <div className="flex items-center space-x-4 mx-6">
                     <button
-                      onClick={() => requestChangeQty(item.productId, item.quantity, -1)}
+                      onClick={() => requestChangeQty(item.productId, item.qty, -1)}
                       className="w-11 h-11 bg-slate-800 hover:bg-slate-700 rounded-xl text-lg font-black flex items-center justify-center cursor-pointer transition text-slate-200 border border-slate-700 shadow"
                     >
                       -
                     </button>
-                    <span className="text-xl font-black w-10 text-center text-amber-300">{item.quantity}</span>
+                    <span className="text-xl font-black w-10 text-center text-amber-300">{item.qty}</span>
                     <button
-                      onClick={() => requestChangeQty(item.productId, item.quantity, 1)}
+                      onClick={() => requestChangeQty(item.productId, item.qty, 1)}
                       className="w-11 h-11 bg-slate-800 hover:bg-slate-700 rounded-xl text-lg font-black flex items-center justify-center cursor-pointer transition text-slate-200 border border-slate-700 shadow"
                     >
                       +
@@ -426,12 +548,12 @@ export default function PosBlockDetailPage() {
                   </div>
 
                   <div className="text-right w-32">
-                    <span className="text-lg font-black text-amber-400">฿{(item.price * item.quantity).toLocaleString()}</span>
+                    <span className="text-lg font-black text-amber-400">฿{(item.unitPrice * item.qty).toLocaleString()}</span>
                   </div>
 
                   <div className="ml-6 pl-4 border-l border-slate-800">
                     <button
-                      onClick={() => handleDeleteItem(item.id, item.productId, item.quantity)}
+                      onClick={() => handleOpenDeleteModal(item)}
                       className="px-4 py-2.5 bg-rose-500/10 hover:bg-rose-500 text-rose-400 hover:text-slate-950 font-bold rounded-xl text-xs transition cursor-pointer border border-rose-500/30 flex items-center space-x-1"
                     >
                       <span>🗑️</span>
@@ -449,6 +571,40 @@ export default function PosBlockDetailPage() {
           </div>
         </div>
       </div>
+
+      {/* Delete Confirmation Modal */}
+      {isDeleteModalOpen && itemToDelete && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/70 backdrop-blur-sm p-4">
+          <div className="bg-slate-900 border border-slate-800 rounded-3xl p-6 max-w-md w-full shadow-2xl text-center space-y-4">
+            <div className="w-16 h-16 bg-rose-500/20 text-rose-500 rounded-full flex items-center justify-center mx-auto text-2xl border border-rose-500/30">
+              ⚠️
+            </div>
+            <div>
+              <h3 className="text-xl font-black text-slate-100">ยืนยันการลบรายการสินค้า?</h3>
+              <p className="text-sm text-slate-400 mt-2">
+                คุณต้องการลบ <strong className="text-amber-400">{itemToDelete.name}</strong> (จำนวน {itemToDelete.qty} ชิ้น) ออกจากบิลนี้ใช่หรือไม่?
+              </p>
+              <p className="text-xs text-amber-300/80 mt-1 font-medium bg-amber-500/10 py-1.5 px-3 rounded-lg border border-amber-500/20">
+                💡 ระบบจะทำการคืนจำนวนสินค้าจำนวน {itemToDelete.qty} ชิ้น กลับเข้าสู่สต็อกสินค้าอัตโนมัติ
+              </p>
+            </div>
+            <div className="flex space-x-3 pt-2">
+              <button
+                onClick={() => setIsDeleteModalOpen(false)}
+                className="flex-1 py-3 bg-slate-800 hover:bg-slate-700 text-slate-300 font-bold rounded-xl text-sm transition cursor-pointer"
+              >
+                ยกเลิก
+              </button>
+              <button
+                onClick={handleConfirmDelete}
+                className="flex-1 py-3 bg-rose-600 hover:bg-rose-500 text-white font-black rounded-xl text-sm transition cursor-pointer shadow-lg shadow-rose-600/30"
+              >
+                ยืนยันการลบและคืนสต็อก
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
 
       {/* Modals */}
       <AddProductModal
@@ -502,7 +658,7 @@ export default function PosBlockDetailPage() {
         customerName={customerName}
         openTime={openTime}
         checkoutTime={checkoutTime}
-        items={items}
+        items={items.map(i => ({ ...i, price: i.unitPrice, quantity: i.qty }))}
         totalQuantity={totalQuantity}
         totalAmount={totalAmount}
         paymentMethod={paymentMethod}
