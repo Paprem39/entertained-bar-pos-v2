@@ -58,7 +58,6 @@ export default function POSLayout({ children }: { children: React.ReactNode }) {
 
   const navItems = [
     { name: "POS บล็อกขาย", href: "/pos", icon: Grid },
-    { name: "เครดิตค้างชำระ", href: "/pos/credits", icon: CreditCard },
     { name: "รายการบิลทั้งหมด", href: "/pos/bills", icon: FileText },
     { name: "จัดการสต็อก", href: "/pos/stock", icon: Package },
     { name: "รายจ่ายร้าน", href: "/pos/expenses", icon: DollarSign },

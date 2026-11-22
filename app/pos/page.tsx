@@ -12,6 +12,10 @@ function POSContent() {
   const router = useRouter()
   const searchParams = useSearchParams()
 
+  const [cancelBillModal, setCancelBillModal] = useState(false)
+  const [blockToCancel, setBlockToCancel] = useState<any>(null)
+  const [isCancellingBill, setIsCancellingBill] = useState(false)
+
   // State สำหรับเก็บข้อมูล Block ทั้งหมดจาก Supabase
   const [blocks, setBlocks] = useState<any[]>([])
   const [loading, setLoading] = useState(true)
@@ -200,7 +204,100 @@ function POSContent() {
     }
   };
 
-  // ยืนยันเปิดบิลด้วยชื่อลูกค้า
+  // กดปุ่ม "ยกเลิกบิล" บน Block ที่เปิดอยู่ -> ตรวจว่าไม่มีรายการสินค้าค้างอยู่
+  const handleRequestCancelBill = async (e: React.MouseEvent, block: any) => {
+    e.stopPropagation()
+
+    if ((block.total || 0) > 0) {
+      setAlertMessage(`ไม่สามารถยกเลิก ${block.name} ได้ เนื่องจากยังมีรายการสินค้าค้างอยู่ในบิล กรุณาลบรายการสินค้าออกให้หมดก่อนครับ`)
+      return
+    }
+
+    try {
+      let hasBillItems = false
+
+      if (block.bill_code && block.bill_code !== '-') {
+        const { data: billRow } = await supabase
+          .from('bills')
+          .select('id')
+          .eq('bill_number', block.bill_code)
+          .maybeSingle()
+
+        if (billRow?.id) {
+          const { count } = await supabase
+            .from('bill_items')
+            .select('id', { count: 'exact', head: true })
+            .eq('bill_id', billRow.id)
+
+          if ((count || 0) > 0) {
+            hasBillItems = true
+          }
+        }
+      }
+
+      if (hasBillItems) {
+        setAlertMessage(`ไม่สามารถยกเลิก ${block.name} ได้ เนื่องจากยังมีรายการสินค้าในบิล กรุณาลบรายการสินค้าออกให้หมดก่อนครับ`)
+        return
+      }
+
+      setBlockToCancel(block)
+      setCancelBillModal(true)
+    } catch (err) {
+      console.error('Error checking bill items before cancel:', err)
+      setAlertMessage('ไม่สามารถตรวจสอบรายการสินค้าในบิลได้ กรุณาลองใหม่อีกครั้ง')
+    }
+  }
+
+  // ยืนยันยกเลิกบิล -> อัปเดต bills เป็น 'cancelled' (เก็บประวัติไว้) และรีเซ็ต pos_blocks ให้ว่าง
+  const handleConfirmCancelBill = async () => {
+    if (!blockToCancel) return
+
+    try {
+      setIsCancellingBill(true)
+
+      if (blockToCancel.bill_code && blockToCancel.bill_code !== '-') {
+        const { error: billUpdateErr } = await supabase
+          .from('bills')
+          .update({
+            status: 'cancelled',
+            subtotal: 0,
+            total_amount: 0,
+          })
+          .eq('bill_number', blockToCancel.bill_code)
+
+        if (billUpdateErr) throw billUpdateErr
+      }
+
+      const resetBlockData = {
+        status: 'available',
+        customer: '',
+        bill_code: '',
+        total: 0,
+        time: '',
+      }
+
+      const { error: blockUpdateErr } = await supabase
+        .from('pos_blocks')
+        .update(resetBlockData)
+        .eq('id', blockToCancel.id)
+
+      if (blockUpdateErr) throw blockUpdateErr
+
+      setBlocks((prev) =>
+        prev.map((b) => (b.id === blockToCancel.id ? { ...b, ...resetBlockData } : b))
+      )
+
+      setCancelBillModal(false)
+      setBlockToCancel(null)
+    } catch (err) {
+      console.error('Error cancelling bill:', err)
+      setAlertMessage('เกิดข้อผิดพลาดในการยกเลิกบิลและรีเซ็ต Block ครับ')
+    } finally {
+      setIsCancellingBill(false)
+    }
+  }
+
+  // ยืนยันเปิดบิลด้วยชื่อลูกค้า (ยึดเลขนำหน้า XX สูงสุดที่เคยเปิดหรือปิดไปแล้วของวันนั้น แล้ว +1 เสมอ)
   const handleOpenBillSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!selectedBlockId || !customerInput.trim()) return;
@@ -215,33 +312,48 @@ function POSContent() {
     const minutes = String(now.getMinutes()).padStart(2, '0');
     const timeStr = `${hours}:${minutes}`;
 
-    const { data: existingBlocks, error: fetchError } = await supabase
+    const { data: allBillsRows, error: billsErr } = await supabase
+      .from('bills')
+      .select('bill_number');
+
+    const { data: allBlocksRows, error: blocksErr } = await supabase
       .from('pos_blocks')
       .select('bill_code');
 
-    let todayBillCount = 0;
+    let maxSeq = 0;
 
-    if (!fetchError && existingBlocks) {
-      existingBlocks.forEach(b => {
-        if (b.bill_code) {
-          const parts = b.bill_code.split('-');
-          if (parts.length === 3 && parts[1] === currentDateStr) {
-            todayBillCount++;
-          }
+    const checkBillCode = (rawCode?: string | null) => {
+      if (!rawCode) return;
+      const parts = String(rawCode).trim().split('-');
+      if (parts.length >= 2 && parts[1] === currentDateStr) {
+        const seq = parseInt(parts[0], 10);
+        if (!Number.isNaN(seq) && seq > maxSeq) {
+          maxSeq = seq;
         }
-      });
+      }
+    };
+
+    if (!billsErr && allBillsRows) {
+      allBillsRows.forEach((row) => checkBillCode(row.bill_number));
     }
 
-    const nextSeq = todayBillCount + 1;
+    if (!blocksErr && allBlocksRows) {
+      allBlocksRows.forEach((row) => checkBillCode(row.bill_code));
+    }
+
+    const nextSeq = maxSeq >= 99 ? 1 : maxSeq + 1;
     const seqStr = String(nextSeq).padStart(2, '0');
     const generatedBillCode = `${seqStr}-${currentDateStr}-${hours}${minutes}`;
 
+    const targetBlock = blocks.find((b) => b.id === selectedBlockId);
+    const cleanCustomer = customerInput.trim();
+
     const updatedData = {
       status: 'occupied',
-      customer: customerInput.trim(),
+      customer: cleanCustomer,
       bill_code: generatedBillCode,
       total: 0,
-      time: timeStr
+      time: timeStr,
     };
 
     const { error } = await supabase
@@ -252,9 +364,29 @@ function POSContent() {
     if (error) {
       console.error('Error opening bill:', error);
       setAlertMessage('ไม่สามารถเปิดบิลได้ กรุณาลองใหม่อีกครั้ง');
-    } else {
-      setBlocks(prev => prev.map(b => b.id === selectedBlockId ? { ...b, ...updatedData } : b));
+      return;
     }
+
+    const { error: insertBillErr } = await supabase
+      .from('bills')
+      .insert({
+        bill_number: generatedBillCode,
+        bill_name: `${targetBlock?.name || `Block ${selectedBlockId}`} - ${cleanCustomer}`,
+        subtotal: 0,
+        total_amount: 0,
+        discount_amount: 0,
+        status: 'active',
+        opened_at: now.toISOString(),
+        created_by_user_id: user?.id || null,
+      });
+
+    if (insertBillErr) {
+      console.error('Error inserting bill on open:', insertBillErr);
+    }
+
+    setBlocks((prev) =>
+      prev.map((b) => (b.id === selectedBlockId ? { ...b, ...updatedData } : b))
+    );
 
     setOpenBillModal(false);
     setCustomerInput('');
@@ -283,10 +415,7 @@ function POSContent() {
           </p>
         </div>
 
-        {/* จุดที่เพิ่ม: ปุ่มสลับโหมดราคาปกติ / ราคาวันแข่ง และปุ่มเพิ่ม-ลด Block */}
         <div className="flex flex-wrap items-center gap-3 justify-end w-full md:w-auto">
-          
-          {/* ส่วนสลับโหมดราคา (Normal vs Tournament) */}
           <div className="flex items-center bg-slate-950 p-1 rounded-xl border border-slate-800 shadow-inner">
             <button
               onClick={() => handlePriceModeChange('normal')}
@@ -328,7 +457,6 @@ function POSContent() {
               <span>เพิ่ม Block</span>
             </button>
           </div>
-
         </div>
       </div>
 
@@ -347,14 +475,24 @@ function POSContent() {
                   : 'bg-slate-900/60 border-slate-800 hover:border-slate-700 hover:bg-slate-900'}
               `}
             >
-              <div className="flex items-center justify-between">
+              <div className="flex items-center justify-between gap-2">
                 <span className="font-bold text-base text-slate-200">{block.name}</span>
-                <span className={`px-2 py-0.5 rounded-full text-xs font-semibold flex items-center space-x-1 ${
-                  isOccupied ? 'bg-amber-500/20 text-amber-400 border border-amber-500/30' : 'bg-emerald-500/10 text-emerald-400 border border-emerald-500/20'
-                }`}>
-                  {isOccupied ? <><Users size={12} /><span>มีลูกค้า</span></> : <><CheckCircle2 size={12} /><span>ว่าง</span></>}
-                </span>
-
+                <div className="flex items-center space-x-1.5">
+                  {isOccupied && (
+                    <button
+                      type="button"
+                      onClick={(e) => handleRequestCancelBill(e, block)}
+                      className="px-2 py-0.5 rounded-full text-[11px] font-bold bg-rose-500/15 hover:bg-rose-500 text-rose-300 hover:text-white border border-rose-500/30 transition cursor-pointer"
+                    >
+                      ยกเลิกบิล
+                    </button>
+                  )}
+                  <span className={`px-2 py-0.5 rounded-full text-xs font-semibold flex items-center space-x-1 ${
+                    isOccupied ? 'bg-amber-500/20 text-amber-400 border border-amber-500/30' : 'bg-emerald-500/10 text-emerald-400 border border-emerald-500/20'
+                  }`}>
+                    {isOccupied ? <><Users size={12} /><span>มีลูกค้า</span></> : <><CheckCircle2 size={12} /><span>ว่าง</span></>}
+                  </span>
+                </div>
               </div>
 
               <div className="my-2">
@@ -436,6 +574,45 @@ function POSContent() {
         </div>
       )}
 
+      {/* --- Modal ยืนยันยกเลิกบิล --- */}
+      {cancelBillModal && blockToCancel && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/70 backdrop-blur-sm p-4 animate-fadeIn">
+          <div className="bg-slate-900 border border-slate-800 rounded-2xl p-6 max-w-sm w-full shadow-2xl text-center space-y-4">
+            <div className="w-14 h-14 bg-rose-500/15 text-rose-400 rounded-full flex items-center justify-center mx-auto text-2xl font-bold border border-rose-500/30">
+              ✕
+            </div>
+            <h3 className="text-xl font-bold text-slate-100">ยืนยันการยกเลิกบิล?</h3>
+            <p className="text-slate-400 text-sm">
+              ต้องการยกเลิกบิล <strong className="text-amber-400 font-mono">{blockToCancel.bill_code}</strong> ({blockToCancel.customer || 'ไม่ระบุชื่อ'}) และรีเซ็ต <strong className="text-slate-200">{blockToCancel.name}</strong> ให้ว่างใช่หรือไม่?
+            </p>
+            <p className="text-[11px] text-slate-400 bg-slate-950/80 border border-slate-800 rounded-xl p-2.5">
+              เลขที่บิลนี้จะถูกเก็บไว้ในหน้ารายการบิลทั้งหมดด้วยสถานะ <strong className="text-rose-400">ยกเลิกบิล</strong>
+            </p>
+            <div className="flex space-x-3 pt-2">
+              <button
+                type="button"
+                disabled={isCancellingBill}
+                onClick={() => {
+                  setCancelBillModal(false)
+                  setBlockToCancel(null)
+                }}
+                className="flex-1 py-2.5 bg-slate-800 hover:bg-slate-700 text-slate-300 font-medium rounded-xl transition cursor-pointer"
+              >
+                กลับ
+              </button>
+              <button
+                type="button"
+                disabled={isCancellingBill}
+                onClick={handleConfirmCancelBill}
+                className="flex-1 py-2.5 bg-rose-600 hover:bg-rose-500 disabled:bg-slate-700 text-white font-bold rounded-xl transition shadow-lg shadow-rose-600/20 cursor-pointer"
+              >
+                {isCancellingBill ? 'กำลังยกเลิก...' : 'ยืนยันยกเลิกบิล'}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
       {/* --- Modal เพิ่ม Block --- */}
       {addBlockModal && (
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/70 backdrop-blur-sm p-4 animate-fadeIn">
@@ -470,7 +647,7 @@ function POSContent() {
         </div>
       )}
 
-      {/* --- แจ้งเตือนทั่วไป (ส่ง query param priceMode ไปยังหน้าย่อยเมื่อกดเข้า block) --- */}
+      {/* --- แจ้งเตือนทั่วไป --- */}
       {alertMessage && (
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/70 backdrop-blur-sm p-4 animate-fadeIn">
           <div className="bg-slate-900 border border-slate-800 rounded-2xl p-6 max-w-sm w-full shadow-2xl text-center space-y-4">

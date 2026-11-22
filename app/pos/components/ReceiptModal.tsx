@@ -7,6 +7,7 @@ interface BillItem {
   name: string;
   price: number;
   quantity: number;
+  isStaffDrink?: boolean;
 }
 
 interface ReceiptModalProps {
@@ -24,6 +25,7 @@ interface ReceiptModalProps {
   cashReceived: string;
   changeAmount: number;
   transferNote: string;
+  isClosingBill?: boolean;
 }
 
 export default function ReceiptModal({
@@ -41,10 +43,12 @@ export default function ReceiptModal({
   cashReceived,
   changeAmount,
   transferNote,
+  isClosingBill = false,
 }: ReceiptModalProps) {
   if (!isOpen) return null;
 
   const cashNum = parseFloat(cashReceived) || 0;
+  const hasAnyDrink = items.some((it) => Boolean(it.isStaffDrink) || it.name.includes('(ดื่ม:'));
 
   return (
     <div className="fixed inset-0 bg-black/90 flex items-center justify-center z-50 p-6">
@@ -100,17 +104,34 @@ export default function ReceiptModal({
         </div>
 
         {/* รายการสินค้า */}
-        <div className="space-y-2 text-xs">
-          <div className="flex justify-between font-bold text-slate-500 border-b pb-1">
-            <span>รายการ</span>
-            <span>จำนวน / ราคา</span>
+        <div className="space-y-2.5 text-xs">
+          <div className="flex justify-between font-bold text-slate-500 border-b border-slate-200 pb-1.5">
+            <span>รายการ (ราคา/หน่วย x จำนวน)</span>
+            <span>รวม</span>
           </div>
-          {items.map((it) => (
-            <div key={it.id} className="flex justify-between items-center">
-              <span className="truncate w-48">{it.name} x{it.quantity}</span>
-              <span className="font-bold">฿{it.price * it.quantity}</span>
-            </div>
-          ))}
+          {items.map((it) => {
+            const isDrinkItem = Boolean(it.isStaffDrink) || it.name.includes('(ดื่ม:');
+            const displayName =
+              isDrinkItem && !it.name.trim().endsWith('*')
+                ? `${it.name} *`
+                : it.name;
+
+            return (
+              <div key={it.id} className="border-b border-dotted border-slate-200 pb-2 last:border-b-0 last:pb-0">
+                <div className="font-bold text-slate-900 break-words leading-snug">
+                  {displayName}
+                </div>
+                <div className="flex justify-between items-center mt-0.5 text-slate-600 pl-2">
+                  <span className="tabular-nums">
+                    ฿{it.price.toLocaleString()} x {it.quantity}
+                  </span>
+                  <span className="font-bold text-slate-900 tabular-nums">
+                    ฿{(it.price * it.quantity).toLocaleString()}
+                  </span>
+                </div>
+              </div>
+            );
+          })}
         </div>
 
         {/* ยอดรวม */}
@@ -141,6 +162,11 @@ export default function ReceiptModal({
               <strong className="text-amber-700">{transferNote}</strong>
             </div>
           )}
+          {hasAnyDrink && (
+            <p className="text-[10px] text-slate-500 pt-1">
+              * หมายถึง รายการดื่มพนักงาน/ผู้รับดื่ม
+            </p>
+          )}
         </div>
 
         <div className="text-center text-xs text-slate-600 pt-2 border-t border-dashed border-slate-300 space-y-1">
@@ -150,16 +176,19 @@ export default function ReceiptModal({
 
         <div className="flex space-x-3 pt-2">
           <button
+            type="button"
             onClick={() => window.print()}
             className="flex-1 py-3 bg-slate-900 hover:bg-slate-800 text-white font-bold rounded-xl text-xs transition cursor-pointer shadow"
           >
             🖨️ ปริ้น
           </button>
           <button
+            type="button"
+            disabled={isClosingBill}
             onClick={onClose}
-            className="flex-1 py-3 bg-amber-500 hover:bg-amber-400 text-slate-950 font-black rounded-xl text-xs transition cursor-pointer shadow"
+            className="flex-1 py-3 bg-amber-500 hover:bg-amber-400 disabled:bg-slate-300 text-slate-950 font-black rounded-xl text-xs transition cursor-pointer shadow"
           >
-            ✓ ปิดหน้าต่างนี้
+            {isClosingBill ? 'กำลังปิดบิล...' : '✓ ปิดหน้าต่างนี้'}
           </button>
         </div>
 
