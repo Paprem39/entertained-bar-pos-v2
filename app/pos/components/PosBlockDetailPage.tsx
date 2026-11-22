@@ -47,6 +47,11 @@ export default function PosBlockDetailPage() {
   const [checkoutTime, setCheckoutTime] = useState<string>('');
   const [cashierName, setCashierName] = useState<string>('กำลังโหลด...');
   const [currentUserId, setCurrentUserId] = useState<string | null>(null);
+  const [alertModalMessage, setAlertModalMessage] = useState<string | null>(null);
+
+  // State จริงสำหรับดื่มพนักงาน / ผู้รับดื่ม
+  const [isStaffDrink, setIsStaffDrink] = useState<boolean>(false);
+  const [drinkerName, setDrinkerName] = useState<string>('');
 
   // State สำหรับจัดการ Popup ยืนยันการลบสินค้า
   const [isDeleteModalOpen, setIsDeleteModalOpen] = useState<boolean>(false);
@@ -171,7 +176,6 @@ export default function PosBlockDetailPage() {
       catData?.forEach((c: any) => { catMap[c.id] = c.name; });
       setCategories(['ทั้งหมด', ...(catData?.map((c: any) => c.name) || [])]);
 
-      // เพิ่ม tournament_price เข้าไปใน query เลือกข้อมูลจากตาราง products
       const { data: prodData, error: prodError } = await supabase
         .from('products')
         .select(`
@@ -194,9 +198,8 @@ export default function PosBlockDetailPage() {
         const categoryName = p.categories?.name || catMap[p.category_id] || 'อื่นๆ';
 
         const normalPrice = p.normal_price || 0;
-        const tournamentPrice = p.tournament_price ?? normalPrice; // ถ้าไม่มีราคาแข่งให้ fallback ใช้ราคาปกติ
+        const tournamentPrice = p.tournament_price ?? normalPrice;
 
-        // เลือกราคาหลักที่จะแสดงผลตามโหมด URL ปัจจุบันทันที
         const activePrice = priceMode === 'tournament' ? tournamentPrice : normalPrice;
 
         return {
@@ -227,7 +230,7 @@ export default function PosBlockDetailPage() {
 
   useEffect(() => {
     fetchSupabaseData();
-  }, [priceMode]); // โหลดข้อมูลใหม่หรืออัปเดตราคาอัตโนมัติเมื่อโหมดเปลี่ยน
+  }, [priceMode]);
 
   const [isAddModalOpen, setIsAddModalOpen] = useState<boolean>(false);
   const [isCheckoutModalOpen, setIsCheckoutModalOpen] = useState<boolean>(false);
@@ -260,6 +263,8 @@ export default function PosBlockDetailPage() {
     setSelectedCategory('ทั้งหมด');
     setSearchQuery('');
     setSelectedProductForAdd(null);
+    setIsStaffDrink(false);
+    setDrinkerName('');
     setIsAddModalOpen(true);
   };
 
@@ -281,7 +286,12 @@ export default function PosBlockDetailPage() {
     if (!selectedProductForAdd) return;
 
     if (addQuantity > selectedProductForAdd.stock) {
-      alert('จำนวนสินค้าในสต็อกไม่พอครับ');
+      setAlertModalMessage('จำนวนสินค้าในสต็อกไม่พอครับ');
+      return;
+    }
+    
+    if (isStaffDrink && !drinkerName.trim()) {
+      setAlertModalMessage('กรุณาระบุชื่อผู้รับดื่มด้วยครับ');
       return;
     }
 
@@ -317,25 +327,35 @@ export default function PosBlockDetailPage() {
       }
 
       const isWhiskey = selectedProductForAdd.category.toLowerCase().includes('whiskey') || selectedProductForAdd.category.toLowerCase().includes('เหล้า');
-      const finalItemName = isWhiskey && selectedMixers.length > 0 
+      let finalItemName = isWhiskey && selectedMixers.length > 0 
         ? `${selectedProductForAdd.name} + ${selectedMixers.join(' + ')}` 
         : selectedProductForAdd.name;
 
-      const calculatedLineTotal = selectedProductForAdd.price * addQuantity;
-
-      const { data: insertedItem, error: insertItemErr } = await supabase
-        .from('bill_items')
-        .insert({
-          bill_id: currentBillId,
-          product_id: selectedProductForAdd.id,
-          product_name: finalItemName,
-          qty: addQuantity,
-          unit_price: selectedProductForAdd.price,
-          line_total: calculatedLineTotal,
-          added_by_user_id: currentUserId
-        })
-        .select('id')
-        .single();
+        const staffDrinkFeePerUnit = isStaffDrink ? 50 : 0;
+        const finalUnitPrice = selectedProductForAdd.price + staffDrinkFeePerUnit;
+  
+        if (isStaffDrink) {
+          finalItemName = `${finalItemName} (ดื่ม: ${drinkerName.trim()})`;
+        }
+  
+        const calculatedLineTotal = finalUnitPrice * addQuantity;
+  
+        const { data: insertedItem, error: insertItemErr } = await supabase
+          .from('bill_items')
+          .insert({
+            bill_id: currentBillId,
+            product_id: selectedProductForAdd.id,
+            product_name: finalItemName,
+            qty: addQuantity,
+            unit_price: finalUnitPrice,
+            line_total: calculatedLineTotal,
+            is_staff_drink: isStaffDrink,
+            staff_drink_fee: staffDrinkFeePerUnit * addQuantity,
+            staff_drink_recipient: isStaffDrink ? drinkerName.trim() : null,
+            added_by_user_id: currentUserId
+          })
+          .select('id')
+          .single();
 
       if (insertItemErr) throw insertItemErr;
 
@@ -358,6 +378,8 @@ export default function PosBlockDetailPage() {
 
       setIsAddModalOpen(false);
       setSelectedProductForAdd(null);
+      setIsStaffDrink(false);
+      setDrinkerName('');
       await fetchBillAndItems(billNo);
       fetchSupabaseData();
 
@@ -403,13 +425,11 @@ export default function PosBlockDetailPage() {
     }
   };
 
-  // ฟังก์ชันเปิด Modal ยืนยันการลบรายการ
   const handleOpenDeleteModal = (item: BillItem) => {
     setItemToDelete(item);
     setIsDeleteModalOpen(true);
   };
 
-  // ฟังก์ชันยืนยันการลบและคืนยอดกลับเข้าสต็อกจริง
   const handleConfirmDelete = async () => {
     if (!itemToDelete) return;
 
@@ -468,6 +488,7 @@ export default function PosBlockDetailPage() {
     setIsReceiptModalOpen(true);
   };
 
+
   return (
     <div className="flex flex-col h-screen bg-slate-950 text-slate-100 overflow-hidden font-sans">
       
@@ -486,7 +507,6 @@ export default function PosBlockDetailPage() {
               <span className="bg-amber-500/20 text-amber-300 text-sm px-3 py-1 rounded-full border border-amber-500/30 font-bold">
                 ลูกค้า: {customerName}
               </span>
-              {/* ป้ายแสดงสถานะโหมดราคาปัจจุบัน */}
               <span className={`text-xs px-3 py-1 rounded-full border font-bold ${
                 priceMode === 'tournament' 
                   ? 'bg-orange-600/20 text-orange-400 border-orange-500/30' 
@@ -650,6 +670,10 @@ export default function PosBlockDetailPage() {
         selectedMixers={selectedMixers}
         setSelectedMixers={setSelectedMixers}
         handleConfirmAddProduct={handleConfirmAddProduct}
+        isStaffDrink={isStaffDrink}
+        setIsStaffDrink={setIsStaffDrink}
+        drinkerName={drinkerName}
+        setDrinkerName={setDrinkerName}
       />
 
       <CheckoutModal
@@ -691,6 +715,28 @@ export default function PosBlockDetailPage() {
         changeAmount={changeAmount}
         transferNote={transferNote}
       />
+
+      {/* Alert Modal (ธีมเดียวกับระบบ) */}
+      {alertModalMessage && (
+        <div className="fixed inset-0 z-[60] flex items-center justify-center bg-black/75 backdrop-blur-sm p-4">
+          <div className="bg-slate-900 border border-slate-800 rounded-3xl p-6 max-w-sm w-full shadow-2xl text-center space-y-4">
+            <div className="w-14 h-14 bg-amber-500/15 text-amber-400 rounded-full flex items-center justify-center mx-auto text-2xl border border-amber-500/30">
+              ⚠️
+            </div>
+            <div>
+              <h3 className="text-lg font-black text-slate-100">แจ้งเตือน</h3>
+              <p className="text-sm text-slate-300 mt-1.5">{alertModalMessage}</p>
+            </div>
+            <button
+              type="button"
+              onClick={() => setAlertModalMessage(null)}
+              className="w-full py-3 bg-amber-500 hover:bg-amber-400 text-slate-950 font-black rounded-xl text-sm transition cursor-pointer shadow-lg"
+            >
+              ตกลง
+            </button>
+          </div>
+        </div>
+      )}
 
     </div>
   );

@@ -5,18 +5,10 @@ import { supabase } from '../supabase'
 import { useRouter } from 'next/navigation'
 import Image from 'next/image'
 
-type User = {
-  id: string
-  username: string
-  display_name: string
-  role: string
-  is_active: boolean
-  created_at: string
-}
-
 export default function AdminHub() {
   const [pendingCount, setPendingCount] = useState(0)
   const [activeUsersCount, setActiveUsersCount] = useState(0)
+  const [pendingDrinkCount, setPendingDrinkCount] = useState(0)
   const [loading, setLoading] = useState(true)
   const router = useRouter()
 
@@ -34,6 +26,16 @@ export default function AdminHub() {
         setPendingCount(pending)
         setActiveUsersCount(active)
       }
+
+      // ดึงจำนวนคำขอรายชื่อผู้รับดื่มที่รอ Admin Approve
+      const { data: drinkData, error: drinkError } = await supabase
+        .from('drink_recipients')
+        .select('status')
+        .eq('status', 'pending')
+
+      if (!drinkError && drinkData) {
+        setPendingDrinkCount(drinkData.length)
+      }
     } catch (err) {
       console.error('Error fetching summary:', err)
     } finally {
@@ -41,7 +43,6 @@ export default function AdminHub() {
     }
   }
 
-  // รายการเมนูหลักทั้ง 6 บล็อก
   const menuCards = [
     {
       id: 'users',
@@ -50,8 +51,20 @@ export default function AdminHub() {
       icon: '👥',
       badge: pendingCount > 0 ? `${pendingCount} รออนุมัติ` : null,
       badgeColor: 'bg-red-500 text-white',
-      path: '/dashboard/users', // เดี๋ยวเราจะทำหน้านี้แยกต่อ หรือทำลิงก์เชื่อมไป
+      path: '/dashboard/users',
       highlight: pendingCount > 0
+    },
+    {
+      id: 'drink-recipients',
+      title: 'อนุมัติรายชื่อรับดื่ม (Drink)',
+      desc: 'อนุมัติรายชื่อพนักงาน/เจ้าของร้าน สำหรับกดเลือกดื่มในหน้า POS',
+      icon: '🍹',
+      badge: pendingDrinkCount > 0 ? `${pendingDrinkCount} รออนุมัติ` : 'พร้อมใช้งาน',
+      badgeColor: pendingDrinkCount > 0
+        ? 'bg-red-500 text-white'
+        : 'bg-emerald-500/20 text-emerald-300 border border-emerald-500/30',
+      path: '/dashboard/drink-recipients',
+      highlight: pendingDrinkCount > 0
     },
     {
       id: 'sales',
@@ -156,7 +169,7 @@ export default function AdminHub() {
           </div>
         </div>
 
-        {/* Menu Cards Grid (บล็อกเมนูใหญ่ 6 ช่อง กดง่ายบนมือถือ) */}
+        {/* Menu Cards Grid */}
         <div>
           <h3 className="text-sm font-bold text-slate-400 uppercase tracking-wider mb-4 px-1">
             เมนูการจัดการหลัก (Management Modules)
@@ -167,8 +180,8 @@ export default function AdminHub() {
               <div
                 key={card.id}
                 onClick={() => {
-                  if (card.id === 'users') {
-                    router.push('/dashboard/users') // ไปหน้าจัดการพนักงานที่เราทำไว้
+                  if (card.path !== '#') {
+                    router.push(card.path)
                   } else {
                     alert(`ฟีเจอร์ "${card.title}" กำลังจะเปิดให้ใช้งานในขั้นตอนถัดไปครับ!`)
                   }
@@ -184,9 +197,11 @@ export default function AdminHub() {
                     <span className="text-3xl p-3 bg-slate-950 rounded-2xl border border-slate-800 group-hover:border-amber-500/30 transition">
                       {card.icon}
                     </span>
-                    <span className={`text-xs font-semibold px-3 py-1 rounded-full ${card.badgeColor}`}>
-                      {card.badge}
-                    </span>
+                    {card.badge && (
+                      <span className={`text-xs font-semibold px-3 py-1 rounded-full ${card.badgeColor}`}>
+                        {card.badge}
+                      </span>
+                    )}
                   </div>
 
                   <h4 className="text-lg font-bold text-white group-hover:text-amber-400 transition mb-1.5">
