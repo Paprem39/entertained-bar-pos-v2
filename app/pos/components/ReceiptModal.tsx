@@ -91,7 +91,7 @@ export default function ReceiptModal({
           </div>
           <div className="flex justify-between">
             <span>เวลาเปิดบิล:</span>
-            <span>{openTime}</span>
+            <span>{openTime || '-'}</span>
           </div>
           <div className="flex justify-between">
             <span>เวลาพิมพ์:</span>

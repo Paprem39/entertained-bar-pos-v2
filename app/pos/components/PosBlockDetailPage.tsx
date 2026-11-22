@@ -75,6 +75,58 @@ export default function PosBlockDetailPage() {
   };
 
   // 2. ดึงข้อมูล Block จาก Supabase ตามตาราง pos_blocks จริง
+  // Helper แปลงวันที่/เวลาเปิดบิลให้มีทั้งวันที่และเวลา (รูปแบบ DD/MM/YYYY HH:mm)
+  const formatOpenDateTime = (rawTime?: string | null, billOpenedAt?: string | null) => {
+    // 1. ถ้ามี opened_at จากตาราง bills ให้ใช้อันนี้ก่อน (แม่นยำสำหรับบิลเครดิต/เปิดข้ามวัน)
+    if (billOpenedAt) {
+      const parsed = new Date(billOpenedAt);
+      if (!Number.isNaN(parsed.getTime())) {
+        const datePart = parsed.toLocaleDateString('th-TH', {
+          day: '2-digit',
+          month: '2-digit',
+          year: 'numeric',
+        });
+        const timePart = parsed.toLocaleTimeString('th-TH', {
+          hour: '2-digit',
+          minute: '2-digit',
+        });
+        return `${datePart} ${timePart}`;
+      }
+    }
+
+    if (!rawTime || rawTime === '-' || rawTime === 'NULL' || rawTime === 'EMPTY') {
+      return '-';
+    }
+
+    // 2. ถ้า rawTime เป็น ISO / timestamp ที่ parse ได้เลย
+    if (rawTime.includes('-') || rawTime.includes('/') || rawTime.includes('T')) {
+      const parsed = new Date(rawTime);
+      if (!Number.isNaN(parsed.getTime())) {
+        const datePart = parsed.toLocaleDateString('th-TH', {
+          day: '2-digit',
+          month: '2-digit',
+          year: 'numeric',
+        });
+        const timePart = parsed.toLocaleTimeString('th-TH', {
+          hour: '2-digit',
+          minute: '2-digit',
+        });
+        return `${datePart} ${timePart}`;
+      }
+      return rawTime;
+    }
+
+    // 3. ถ้า rawTime มาแค่เวลา เช่น "08:58" หรือ "08:58:00" ให้พ่วงวันที่ปัจจุบันเข้าไป
+    const todayStr = new Date().toLocaleDateString('th-TH', {
+      day: '2-digit',
+      month: '2-digit',
+      year: 'numeric',
+    });
+    const cleanTime = rawTime.trim().slice(0, 5); // เอา HH:mm
+    return `${todayStr} ${cleanTime}`;
+  };
+
+  // 2. ดึงข้อมูล Block จาก Supabase ตามตาราง pos_blocks จริง
   const fetchBlockDetails = async (id: string) => {
     try {
       const { data, error } = await supabase
@@ -93,10 +145,10 @@ export default function PosBlockDetailPage() {
         setBlockName(data.name || `Block ${id}`);
         setCustomerName(data.customer && data.customer !== 'NULL' && data.customer !== 'EMPTY' ? data.customer : 'ยังไม่ระบุชื่อลูกค้า');
         setBillNo(currentBillCode);
-        setOpenTime(data.time && data.time !== 'NULL' && data.time !== 'EMPTY' ? data.time : '-');
+        setOpenTime(formatOpenDateTime(data.time, null));
 
         if (currentBillCode && currentBillCode !== '-') {
-          fetchBillAndItems(currentBillCode);
+          fetchBillAndItems(currentBillCode, data.time);
         }
       }
     } catch (err) {
@@ -105,15 +157,20 @@ export default function PosBlockDetailPage() {
   };
 
   // ฟังก์ชันดึงรายการสินค้าในบิลจากตาราง bills และ bill_items
-  const fetchBillAndItems = async (currentBillCode: string) => {
+  const fetchBillAndItems = async (currentBillCode: string, blockRawTime?: string | null) => {
     try {
       const { data: billData, error: billError } = await supabase
         .from('bills')
-        .select('id')
+        .select('id, opened_at')
         .eq('bill_number', currentBillCode)
         .single();
 
       if (billError || !billData) return;
+
+      // อัปเดต openTime ให้ใช้วันที่เปิดบิลจริงจาก bills.opened_at ถ้ามี
+      if (billData.opened_at) {
+        setOpenTime(formatOpenDateTime(blockRawTime, billData.opened_at));
+      }
 
       const { data: itemsData, error: itemsError } = await supabase
         .from('bill_items')
@@ -469,7 +526,7 @@ export default function PosBlockDetailPage() {
   const handleConfirmCheckout = async () => {
     const nowStr = new Date().toLocaleString('th-TH', { 
       day: '2-digit', month: '2-digit', year: 'numeric', 
-      hour: '2-digit', minute: '2-digit', second: '2-digit' 
+      hour: '2-digit', minute: '2-digit'
     });
     setCheckoutTime(nowStr);
 
@@ -691,7 +748,7 @@ export default function PosBlockDetailPage() {
         onPrintPreview={() => {
           const nowStr = new Date().toLocaleString('th-TH', { 
             day: '2-digit', month: '2-digit', year: 'numeric', 
-            hour: '2-digit', minute: '2-digit', second: '2-digit' 
+            hour: '2-digit', minute: '2-digit'
           });
           setCheckoutTime(nowStr);
           setIsReceiptModalOpen(true);

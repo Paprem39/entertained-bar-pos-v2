@@ -219,6 +219,7 @@ export default function DrinkRecipientsPage() {
             >
               <option value="staff">Staff (พนักงาน)</option>
               <option value="owner">Owner (เจ้าของร้าน)</option>
+              <option value="owner">Other (คนอื่น)</option>
             </select>
           </div>
 

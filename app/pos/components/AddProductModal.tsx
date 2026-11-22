@@ -206,16 +206,19 @@ export default function AddProductModal({
         <div className="flex-1 overflow-hidden flex flex-col md:flex-row">
           
           {/* ฝั่งซ้าย: ค้นหา หมวดหมู่ และ Catalog สินค้า */}
-          <div className="flex-1 p-6 overflow-y-auto flex flex-col space-y-4 border-r border-slate-800">
+          <div className="flex-1 p-6 flex flex-col space-y-4 border-r border-slate-800 overflow-hidden">
+            
+            {/* ช่องค้นหา (ล็อกไม่ให้โดนบีบด้วย shrink-0) */}
             <input
               type="text"
               placeholder="ค้นหาชื่อสินค้า..."
               value={searchQuery}
               onChange={(e) => setSearchQuery(e.target.value)}
-              className="w-full bg-slate-950 border border-slate-800 rounded-2xl px-5 py-3 text-slate-100 placeholder-slate-500 focus:outline-none focus:border-amber-500"
+              className="w-full shrink-0 bg-slate-950 border border-slate-800 rounded-2xl px-5 py-3 text-slate-100 placeholder-slate-500 focus:outline-none focus:border-amber-500"
             />
             
-            <div className="flex gap-2 overflow-x-auto pb-1">
+            {/* แถบปุ่มหมวดหมู่ (ล็อกไม่ให้โดนบีบด้วย shrink-0 และเพิ่ม flex-wrap เผื่อหมวดหมู่เยอะ) */}
+            <div className="shrink-0 flex flex-wrap gap-2">
               {categories.map(cat => (
                 <button
                   key={cat}
@@ -232,53 +235,56 @@ export default function AddProductModal({
               ))}
             </div>
 
-            <div className="grid grid-cols-2 gap-3">
-              {filteredCatalog.map(product => {
-                const isOutOfStock = product.stock <= 0;
-                const isLowStock = !isOutOfStock && product.stock <= product.minStock;
-                const isSelected = selectedProductForAdd?.id === product.id;
-                const displayPrice = getProductPrice(product);
+            {/* Product Grid (เลื่อน Scroll เฉพาะส่วนรายการสินค้าด้านล่าง) */}
+            <div className="flex-1 overflow-y-auto pr-1">
+              <div className="grid grid-cols-2 gap-3 pb-2">
+                {filteredCatalog.map(product => {
+                  const isOutOfStock = product.stock <= 0;
+                  const isLowStock = !isOutOfStock && product.stock <= product.minStock;
+                  const isSelected = selectedProductForAdd?.id === product.id;
+                  const displayPrice = getProductPrice(product);
 
-                return (
-                  <div
-                    key={product.id}
-                    onClick={() => {
-                      if (!isOutOfStock) {
-                        handleSelectProduct({ ...product, price: displayPrice });
-                      }
-                    }}
-                    className={`p-4 rounded-2xl border transition flex flex-col justify-between ${
-                      isOutOfStock 
-                        ? 'bg-slate-950/40 border-slate-900 opacity-50 cursor-not-allowed' 
-                        : isSelected
-                        ? 'bg-amber-500/10 border-amber-500 ring-2 ring-amber-500/50 cursor-pointer'
-                        : 'bg-slate-950/80 border-slate-800 hover:border-amber-500/50 hover:bg-slate-850 cursor-pointer'
-                    }`}
-                  >
-                    <div>
-                      <div className="flex justify-between items-start">
-                        <span className="text-[10px] uppercase font-bold tracking-wider text-amber-500 bg-amber-500/10 px-2 py-0.5 rounded-md">
-                          {product.category}
-                        </span>
-                        <span className="text-amber-400 font-black text-base">฿{displayPrice}</span>
+                  return (
+                    <div
+                      key={product.id}
+                      onClick={() => {
+                        if (!isOutOfStock) {
+                          handleSelectProduct({ ...product, price: displayPrice });
+                        }
+                      }}
+                      className={`p-4 rounded-2xl border transition flex flex-col justify-between ${
+                        isOutOfStock 
+                          ? 'bg-slate-950/40 border-slate-900 opacity-50 cursor-not-allowed' 
+                          : isSelected
+                          ? 'bg-amber-500/10 border-amber-500 ring-2 ring-amber-500/50 cursor-pointer'
+                          : 'bg-slate-950/80 border-slate-800 hover:border-amber-500/50 hover:bg-slate-850 cursor-pointer'
+                      }`}
+                    >
+                      <div>
+                        <div className="flex justify-between items-start">
+                          <span className="text-[10px] uppercase font-bold tracking-wider text-amber-500 bg-amber-500/10 px-2 py-0.5 rounded-md">
+                            {product.category}
+                          </span>
+                          <span className="text-amber-400 font-black text-base">฿{displayPrice}</span>
+                        </div>
+                        <h4 className="font-bold text-slate-100 text-sm mt-2 line-clamp-1">{product.name}</h4>
                       </div>
-                      <h4 className="font-bold text-slate-100 text-sm mt-2 line-clamp-1">{product.name}</h4>
-                    </div>
 
-                    <div className="mt-3 pt-2 border-t border-slate-900 flex justify-between items-center text-xs">
-                      {isOutOfStock ? (
-                        <span className="text-rose-500 font-bold">สินค้าหมด</span>
-                      ) : isLowStock ? (
-                        <span className="text-rose-400 font-bold animate-pulse flex items-center space-x-1">
-                          <span>⚠️ สต็อก: {product.stock} (ต่ำกว่า Min: {product.minStock})</span>
-                        </span>
-                      ) : (
-                        <span className="text-slate-400 font-medium">สต็อก: {product.stock}</span>
-                      )}
+                      <div className="mt-3 pt-2 border-t border-slate-900 flex justify-between items-center text-xs">
+                        {isOutOfStock ? (
+                          <span className="text-rose-500 font-bold">สินค้าหมด</span>
+                        ) : isLowStock ? (
+                          <span className="text-rose-400 font-bold animate-pulse flex items-center space-x-1">
+                            <span>⚠️ สต็อก: {product.stock} (ต่ำกว่า Min: {product.minStock})</span>
+                          </span>
+                        ) : (
+                          <span className="text-slate-400 font-medium">สต็อก: {product.stock}</span>
+                        )}
+                      </div>
                     </div>
-                  </div>
-                );
-              })}
+                  );
+                })}
+              </div>
             </div>
           </div>
 
