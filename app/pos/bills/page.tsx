@@ -69,6 +69,10 @@ export default function AllBillsPage() {
   const [isReceiptOpen, setIsReceiptOpen] = useState<boolean>(false);
   const [loadingBillDetail, setLoadingBillDetail] = useState<boolean>(false);
 
+  // Cancel Bill Modal States
+  const [billToCancel, setBillToCancel] = useState<BillRecord | null>(null);
+  const [isCancelling, setIsCancelling] = useState<boolean>(false);
+
   // ดึงข้อมูลแคชเชียร์ปัจจุบัน
   useEffect(() => {
     const fetchCashier = async () => {
@@ -248,6 +252,103 @@ export default function AllBillsPage() {
     }
   };
 
+  // ยืนยันยกเลิกบิล: คืนสต็อกกลับเข้าที่เดิม และเปลี่ยนสถานะบิลเป็น 'cancelled' (ไม่รวมยอดขาย แต่เก็บไว้ดูย้อนหลัง)
+  const handleConfirmCancelBill = async () => {
+    if (!billToCancel) return;
+
+    try {
+      setIsCancelling(true);
+
+      // เช็กสถานะล่าสุดจาก DB อีกรอบ กันการกดยกเลิกซ้ำ 2 รอบ
+      const { data: latestBill, error: fetchLatestErr } = await supabase
+        .from('bills')
+        .select('id, status, bill_number')
+        .eq('id', billToCancel.id)
+        .single();
+
+      if (fetchLatestErr) throw fetchLatestErr;
+      if (!latestBill || latestBill.status === 'cancelled') {
+        setBillToCancel(null);
+        await fetchBills();
+        return;
+      }
+
+      // 1. ดึงรายการสินค้าในบิลนี้เพื่อคืนสต็อกกลับที่เดิม
+      const { data: billItemsRows, error: itemsErr } = await supabase
+        .from('bill_items')
+        .select('product_id, qty')
+        .eq('bill_id', latestBill.id);
+
+      if (itemsErr) throw itemsErr;
+
+      // รวมยอดจำนวนที่ต้องคืนต่อ product_id
+      const returnMap = new Map<string, number>();
+      (billItemsRows || []).forEach((row: any) => {
+        const qtyNum = Number(row.qty || 0);
+        if (row.product_id && qtyNum > 0) {
+          returnMap.set(row.product_id, (returnMap.get(row.product_id) || 0) + qtyNum);
+        }
+      });
+
+      // คืนสต็อกกลับเข้าตาราง stocks (ใช้คอลัมน์ current_qty ตามโครงสร้างจริง)
+      const nowIso = new Date().toISOString();
+      for (const [productId, addQty] of returnMap.entries()) {
+        const { data: stockRow, error: stockFetchErr } = await supabase
+          .from('stocks')
+          .select('id, current_qty')
+          .eq('product_id', productId)
+          .maybeSingle();
+
+        if (stockFetchErr) {
+          console.error('Stock fetch error:', stockFetchErr, { productId });
+          continue;
+        }
+
+        if (!stockRow) {
+          console.warn('No stock row found for product_id:', productId);
+          continue;
+        }
+
+        const currentQty = Number(stockRow.current_qty ?? 0);
+        const { error: stockUpdateErr } = await supabase
+          .from('stocks')
+          .update({
+            current_qty: currentQty + addQty,
+            last_adjusted_at: nowIso,
+            updated_at: nowIso,
+          })
+          .eq('id', stockRow.id);
+
+        if (stockUpdateErr) {
+          console.error('Stock update error:', stockUpdateErr, { productId, stockRow });
+        }
+      }
+
+      // 2. เปลี่ยนสถานะบิลเป็น 'cancelled' (ยังคงบิลไว้เป็นหลักฐาน ไม่นับรวมยอดขาย)
+      const { error: updateBillErr } = await supabase
+        .from('bills')
+        .update({ status: 'cancelled' })
+        .eq('id', latestBill.id);
+
+      if (updateBillErr) throw updateBillErr;
+
+      // อัปเดต state หน้าจอทันที
+      setBills((prev) =>
+        prev.map((b) => (b.id === latestBill.id ? { ...b, status: 'cancelled' } : b))
+      );
+      if (selectedBill?.id === latestBill.id) {
+        setSelectedBill((prev) => (prev ? { ...prev, status: 'cancelled' } : prev));
+      }
+
+      setBillToCancel(null);
+    } catch (err) {
+      console.error('Error cancelling bill:', err);
+      alert('เกิดข้อผิดพลาดในการยกเลิกบิล กรุณาลองใหม่อีกครั้งครับ');
+    } finally {
+      setIsCancelling(false);
+    }
+  };
+
   // เลื่อนแถวปัดบิลซ้าย/ขวาด้วยปุ่ม
   const scrollCarousel = (direction: 'left' | 'right') => {
     if (!carouselRef.current) return;
@@ -256,14 +357,13 @@ export default function AllBillsPage() {
   };
 
   const renderStatusBadge = (status: string) => {
-
     if (status === 'cancelled') {
-        return (
-          <span className="px-2.5 py-1 rounded-full text-[11px] font-black bg-rose-500/15 text-rose-400 border border-rose-500/30">
-            ✕ ยกเลิกบิล
-          </span>
-        );
-      }
+      return (
+        <span className="px-2.5 py-1 rounded-full text-[11px] font-black bg-rose-500/15 text-rose-400 border border-rose-500/30">
+          ✕ ยกเลิกบิล
+        </span>
+      );
+    }
 
     if (status === 'paid') {
       return (
@@ -280,7 +380,7 @@ export default function AllBillsPage() {
         </span>
       );
     }
-    
+
     return (
       <span className="px-2.5 py-1 rounded-full text-[11px] font-black bg-sky-500/15 text-sky-300 border border-sky-500/30">
         ● กำลังเปิดบิล
@@ -297,7 +397,7 @@ export default function AllBillsPage() {
   return (
     <div className="min-h-screen bg-slate-950 text-slate-100 p-6 md:p-8 font-sans">
       <div className="max-w-7xl mx-auto space-y-6">
-        
+
         {/* Top Header */}
         <div className="flex flex-col md:flex-row md:items-center md:justify-between gap-4 bg-slate-900 border border-slate-800 rounded-3xl p-6 shadow-xl">
           <div className="flex items-center gap-4">
@@ -595,16 +695,30 @@ export default function AllBillsPage() {
                     </div>
                   </div>
 
-                  <div className="mt-5 pt-4 border-t border-slate-800 flex items-center justify-between">
+                  <div className="mt-5 pt-4 border-t border-slate-800 flex items-center justify-between gap-2">
                     <div>
                       <p className="text-[11px] text-slate-400">ยอดรวมสุทธิ</p>
                       <p className="text-2xl font-black text-amber-400">
                         ฿{Number(bill.total_amount || 0).toLocaleString()}
                       </p>
                     </div>
-                    <span className="px-4 py-2.5 rounded-xl bg-amber-500 text-slate-950 font-black text-xs group-hover:bg-amber-400 transition">
-                      🖨️ ดูใบเสร็จ / รีปริ้น
-                    </span>
+                    <div className="flex items-center gap-2">
+                      {bill.status !== 'cancelled' && (
+                        <button
+                          type="button"
+                          onClick={(e) => {
+                            e.stopPropagation();
+                            setBillToCancel(bill);
+                          }}
+                          className="px-3 py-2.5 rounded-xl bg-rose-500/15 hover:bg-rose-500 text-rose-300 hover:text-white border border-rose-500/30 font-bold text-xs transition cursor-pointer"
+                        >
+                          ✕ ยกเลิกบิล
+                        </button>
+                      )}
+                      <span className="px-3.5 py-2.5 rounded-xl bg-amber-500 text-slate-950 font-black text-xs group-hover:bg-amber-400 transition">
+                        🖨️ รีปริ้น
+                      </span>
+                    </div>
                   </div>
                 </div>
               ))}
@@ -634,19 +748,80 @@ export default function AllBillsPage() {
                   </p>
                 </div>
 
-                <div className="mt-4 pt-3 border-t border-slate-800 flex items-center justify-between">
+                <div className="mt-4 pt-3 border-t border-slate-800 flex items-center justify-between gap-2">
                   <span className="text-xl font-black text-amber-400">
                     ฿{Number(bill.total_amount || 0).toLocaleString()}
                   </span>
-                  <span className="px-3.5 py-2 rounded-xl bg-amber-500 text-slate-950 font-black text-xs">
-                    🖨️ รีปริ้นใบเสร็จ
-                  </span>
+                  <div className="flex items-center gap-2">
+                    {bill.status !== 'cancelled' && (
+                      <button
+                        type="button"
+                        onClick={(e) => {
+                          e.stopPropagation();
+                          setBillToCancel(bill);
+                        }}
+                        className="px-3 py-2 rounded-xl bg-rose-500/15 hover:bg-rose-500 text-rose-300 hover:text-white border border-rose-500/30 font-bold text-xs transition cursor-pointer"
+                      >
+                        ✕ ยกเลิกบิล
+                      </button>
+                    )}
+                    <span className="px-3.5 py-2 rounded-xl bg-amber-500 text-slate-950 font-black text-xs">
+                      🖨️ รีปริ้นใบเสร็จ
+                    </span>
+                  </div>
                 </div>
               </div>
             ))}
           </div>
         )}
       </div>
+
+      {/* Modal ยืนยันการยกเลิกบิล */}
+      {billToCancel && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/75 backdrop-blur-sm p-4">
+          <div className="bg-slate-900 border border-slate-800 rounded-3xl p-6 max-w-md w-full shadow-2xl space-y-4 text-center">
+            <div className="w-14 h-14 rounded-full bg-rose-500/15 text-rose-400 border border-rose-500/30 flex items-center justify-center mx-auto text-2xl font-black">
+              ✕
+            </div>
+            <h3 className="text-xl font-black text-slate-100">ยืนยันการยกเลิกบิล?</h3>
+            <p className="text-sm text-slate-300">
+              ต้องการยกเลิกบิล{' '}
+              <span className="font-mono font-bold text-amber-400">
+                {billToCancel.bill_number}
+              </span>{' '}
+              (ยอด{' '}
+              <strong className="text-amber-400">
+                ฿{Number(billToCancel.total_amount || 0).toLocaleString()}
+              </strong>
+              ) ใช่หรือไม่?
+            </p>
+            <div className="bg-slate-950 border border-slate-800 rounded-2xl p-3 text-xs text-slate-400 text-left space-y-1">
+              <p>• บิลจะถูกเปลี่ยนเป็นสถานะ <strong className="text-rose-400">ยกเลิกบิล</strong> และไม่รวมในยอดขาย</p>
+              <p>• ระบบจะคืนสต็อกสินค้าในบิลนี้กลับเข้าที่เดิม</p>
+              <p>• บิลยังคงอยู่ในประวัติให้ดู/รีปริ้นเป็นหลักฐานได้ เพื่อเปิดบิลใหม่คีย์รายการถูกต้อง</p>
+            </div>
+
+            <div className="flex gap-3 pt-2">
+              <button
+                type="button"
+                disabled={isCancelling}
+                onClick={() => setBillToCancel(null)}
+                className="flex-1 py-2.5 rounded-xl bg-slate-800 hover:bg-slate-700 text-slate-300 font-bold text-sm transition cursor-pointer"
+              >
+                ปิดไว้ก่อน
+              </button>
+              <button
+                type="button"
+                disabled={isCancelling}
+                onClick={handleConfirmCancelBill}
+                className="flex-1 py-2.5 rounded-xl bg-rose-600 hover:bg-rose-500 disabled:bg-slate-700 text-white font-black text-sm transition cursor-pointer"
+              >
+                {isCancelling ? 'กำลังยกเลิก...' : '✓ ยืนยันยกเลิกบิล'}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
 
       {/* Modal ใบเสร็จสำหรับดูย้อนหลังและกดรีปริ้น */}
       <ReceiptModal
