@@ -4,8 +4,12 @@ import type { NextRequest } from 'next/server'
 export async function middleware(request: NextRequest) {
   const path = request.nextUrl.pathname
 
-  // ป้องกันเฉพาะหน้า Dashboard หรือ POS
-  if (path.startsWith('/dashboard') || path.startsWith('/pos')) {
+  // ป้องกันเฉพาะหน้า Dashboard, POS และ Staff
+  if (
+    path.startsWith('/dashboard') ||
+    path.startsWith('/pos') ||
+    path.startsWith('/staff')
+  ) {
     const sessionCookie = request.cookies.get('bar_session')
 
     if (!sessionCookie) {
@@ -18,5 +22,5 @@ export async function middleware(request: NextRequest) {
 }
 
 export const config = {
-  matcher: ['/dashboard/:path*', '/pos/:path*'],
+  matcher: ['/dashboard/:path*', '/pos/:path*', '/staff/:path*'],
 }

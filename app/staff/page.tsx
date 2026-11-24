@@ -847,16 +847,15 @@ export default function StaffPortalPage() {
       {showQrModal && (
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/80 backdrop-blur-sm p-4">
           <div className="bg-white text-slate-900 rounded-3xl p-6 max-w-sm w-full text-center space-y-4 shadow-2xl">
-            <h3 className="text-xl font-black text-slate-900">📱 สแกนดูรายการเมนู</h3>
+            <h3 className="text-xl font-black text-slate-900">📱 QR รายการเมนู</h3>
             <p className="text-xs text-slate-600">
-              ให้ลูกค้าใช้กล้องมือถือสแกน QR นี้เพื่อเปิดดูรายการและราคา (ระบบซ่อนจำนวนสต็อกร้านอัตโนมัติ)
+              แสดงรายการสินค้าและราคาของร้าน (ซ่อนจำนวนสต็อกคงเหลืออัตโนมัติ)
             </p>
             {qrImageSrc && (
               <div className="w-56 h-56 mx-auto bg-white p-3 rounded-2xl border-2 border-slate-200 flex items-center justify-center">
                 <img src={qrImageSrc} alt="QR เมนูร้าน" className="w-full h-full object-contain" />
               </div>
             )}
-            <p className="text-[11px] font-mono text-slate-500 break-all">{publicMenuUrl}</p>
             <button
               type="button"
               onClick={() => setShowQrModal(false)}
