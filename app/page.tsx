@@ -77,6 +77,8 @@ export default function LoginPage() {
   const redirectUser = (role: string) => {
     if (role === 'admin') {
       router.push('/dashboard')
+    } else if (role === 'staff') {
+      router.push('/staff')
     } else {
       router.push('/pos')
     }
