@@ -530,8 +530,11 @@ export default function PosBlockDetailPage() {
 
   const handleConfirmCheckout = async () => {
     const nowStr = new Date().toLocaleString('th-TH', {
-      day: '2-digit', month: '2-digit', year: 'numeric',
-      hour: '2-digit', minute: '2-digit'
+      day: '2-digit',
+      month: '2-digit',
+      year: 'numeric',
+      hour: '2-digit',
+      minute: '2-digit',
     });
     setCheckoutTime(nowStr);
 
@@ -540,46 +543,14 @@ export default function PosBlockDetailPage() {
       return;
     }
 
-    if (paymentMethod === 'credit') {
-      try {
-        setIsCompletingBill(true);
-        await supabase
-          .from('bills')
-          .update({
-            total_amount: totalAmount,
-            subtotal: totalAmount,
-            status: 'credit',
-            payment_method: 'credit',
-          })
-          .eq('bill_number', billNo);
-
-        await supabase
-          .from('pos_blocks')
-          .update({
-            status: 'available',
-            bill_code: null,
-            customer: null,
-            time: null,
-          })
-          .eq('id', blockId);
-
-        router.push(`/pos?mode=${priceMode}`);
-      } catch (err) {
-        console.error('Error saving credit bill:', err);
-        setAlertModalMessage('บันทึกบิลเครดิตไม่สำเร็จครับ');
-      } finally {
-        setIsCompletingBill(false);
-      }
-      return;
-    }
-
+    // ทั้ง เงินสด / โอนจ่าย / เครดิต (ค้างชำระ): เปิดสลิปขึ้นมาให้ดูก่อน แล้วค่อยบันทึกปิดบิลตอนกดปิดหน้าต่างสลิป
     setIsCheckoutModalOpen(false);
     setIsSettledReceipt(true);
     setIsReceiptModalOpen(true);
   };
 
   const handleCloseReceiptModal = async () => {
-    // ถ้าแค่กดพิมพ์ใบแจ้งยอดก่อนจ่ายเงิน ให้ปิดหน้าต่างเฉยๆ ไม่ปิด Block
+    // ถ้าแค่กดพิมพ์ใบแจ้งยอดก่อนยืนยันคิดเงิน ให้ปิดหน้าต่างเฉยๆ ไม่ปิด Block
     if (!isSettledReceipt) {
       setIsReceiptModalOpen(false);
       return;
@@ -588,13 +559,16 @@ export default function PosBlockDetailPage() {
     try {
       setIsCompletingBill(true);
 
-      // 1. บันทึกบิลที่ชำระเงินแล้วลงตาราง bills (เก็บไว้ดูย้อนหลัง / รีปริ้น)
+      const isCreditMode = paymentMethod === 'credit';
+      const nextBillStatus = isCreditMode ? 'credit' : 'paid';
+
+      // 1. บันทึกบิลลงตาราง bills ('credit' สำหรับค้างชำระ หรือ 'paid' สำหรับเงินสด/โอน)
       const { data: updatedBill, error: billErr } = await supabase
         .from('bills')
         .update({
           subtotal: totalAmount,
           total_amount: totalAmount,
-          status: 'paid',
+          status: nextBillStatus,
         })
         .eq('bill_number', billNo)
         .select('id')
@@ -602,20 +576,22 @@ export default function PosBlockDetailPage() {
 
       if (billErr) throw billErr;
 
-      // 2. บันทึกประวัติการชำระเงินลงตาราง payments (ตรงตามคอลัมน์จริงใน Supabase)
-      if (updatedBill?.id) {
-        const { error: payErr } = await supabase
-          .from('payments')
-          .insert({
-            bill_id: updatedBill.id,
-            payment_method: paymentMethod,
-            amount: totalAmount,
-            received_amount: paymentMethod === 'cash' ? cashNum : totalAmount,
-            change_amount: paymentMethod === 'cash' ? Math.max(0, changeAmount) : 0,
-            payment_note: paymentMethod === 'transfer' ? (transferNote || null) : null,
-            paid_at: new Date().toISOString(),
-            received_by_user_id: currentUserId,
-          });
+      // 2. บันทึกประวัติการชำระเงินลงตาราง payments เฉพาะกรณีรับเงินสดหรือโอนจ่ายทันที
+      // (กรณีเครดิตค้างชำระ ยังไม่บันทึกการรับเงิน จนกว่าลูกค้าจะมาชำระจริงในวันหลัง ยอดขายจึงจะเข้าวันนั้น)
+      if (!isCreditMode && updatedBill?.id) {
+        const cleanTransferNote =
+          paymentMethod === 'transfer' ? transferNote.trim() || null : null;
+
+        const { error: payErr } = await supabase.from('payments').insert({
+          bill_id: updatedBill.id,
+          payment_method: paymentMethod,
+          amount: totalAmount,
+          received_amount: paymentMethod === 'cash' ? cashNum : totalAmount,
+          change_amount: paymentMethod === 'cash' ? Math.max(0, changeAmount) : 0,
+          payment_note: cleanTransferNote,
+          paid_at: new Date().toISOString(),
+          received_by_user_id: currentUserId,
+        });
 
         if (payErr) {
           console.error('Error inserting payment record:', payErr);
@@ -636,6 +612,9 @@ export default function PosBlockDetailPage() {
 
       if (blockErr) throw blockErr;
 
+      setCashReceived('');
+      setTransferNote('');
+      setPaymentMethod('cash');
       setIsReceiptModalOpen(false);
       setIsSettledReceipt(false);
       router.push(`/pos?mode=${priceMode}`);

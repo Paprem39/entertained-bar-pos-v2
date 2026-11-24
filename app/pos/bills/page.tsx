@@ -41,6 +41,7 @@ export default function AllBillsPage() {
   const [bills, setBills] = useState<BillRecord[]>([]);
   const [loading, setLoading] = useState<boolean>(true);
   const [cashierName, setCashierName] = useState<string>('แคชเชียร์');
+  const [currentUserId, setCurrentUserId] = useState<string | null>(null);
 
   // Filter & Search States
   const [searchQuery, setSearchQuery] = useState<string>('');
@@ -73,6 +74,14 @@ export default function AllBillsPage() {
   const [billToCancel, setBillToCancel] = useState<BillRecord | null>(null);
   const [isCancelling, setIsCancelling] = useState<boolean>(false);
 
+  // Settle Credit Bill Modal States (รับชำระบิลเครดิต: เงินสด หรือ โอนจ่าย -> ยอดเข้าวันที่จ่ายจริง)
+  const [creditBillToPay, setCreditBillToPay] = useState<BillRecord | null>(null);
+  const [settleMethod, setSettleMethod] = useState<'cash' | 'transfer'>('cash');
+  const [settleCashReceived, setSettleCashReceived] = useState<string>('');
+  const [settleTransferNote, setSettleTransferNote] = useState<string>('');
+  const [settleError, setSettleError] = useState<string | null>(null);
+  const [isSettlingCredit, setIsSettlingCredit] = useState<boolean>(false);
+
   // ดึงข้อมูลแคชเชียร์ปัจจุบัน
   useEffect(() => {
     const fetchCashier = async () => {
@@ -81,6 +90,7 @@ export default function AllBillsPage() {
         const data = await res.json();
         if (data.authenticated && data.user) {
           setCashierName(data.user.display_name || data.user.name || 'พนักงาน');
+          setCurrentUserId(data.user.id || null);
         }
       } catch {
         setCashierName('ระบบแคชเชียร์');
@@ -111,7 +121,6 @@ export default function AllBillsPage() {
     fetchBills();
   }, []);
 
-  // รายการปีที่มีในบิลทั้งหมดสำหรับตัวกรองปี
   const availableYears = useMemo(() => {
     const years = new Set<string>();
     bills.forEach((b) => {
@@ -125,7 +134,6 @@ export default function AllBillsPage() {
     return Array.from(years).sort((a, b) => Number(b) - Number(a));
   }, [bills]);
 
-  // แยกชื่อลูกค้าออกจาก bill_name (เช่น "Block Block 6 - จินตหรา" -> "จินตหรา")
   const extractCustomerName = (billName?: string | null) => {
     if (!billName) return 'ไม่ระบุชื่อลูกค้า';
     const parts = billName.split(' - ');
@@ -138,7 +146,6 @@ export default function AllBillsPage() {
     return parts[0]?.replace(/^Block\s+/i, '').trim() || '-';
   };
 
-  // ฟอร์แมตวันเวลาแบบ DD/MM/YYYY HH:mm
   const formatThaiDateTime = (isoStr?: string | null, onlyDate = false) => {
     if (!isoStr) return '-';
     const parsed = new Date(isoStr);
@@ -158,7 +165,6 @@ export default function AllBillsPage() {
     return `${datePart} ${timePart}`;
   };
 
-  // กรองบิลตาม วัน/เดือน/ปี, สถานะ และคำค้นหา (เลขที่บิล / ชื่อลูกค้า)
   const filteredBills = useMemo(() => {
     return bills.filter((bill) => {
       const customer = extractCustomerName(bill.bill_name).toLowerCase();
@@ -196,7 +202,6 @@ export default function AllBillsPage() {
     });
   }, [bills, searchQuery, statusFilter, dateFilterMode, selectedDay, selectedMonth, selectedYear]);
 
-  // สรุปยอดจากบิลที่กรองได้
   const summaryStats = useMemo(() => {
     const totalCount = filteredBills.length;
     const paidBills = filteredBills.filter((b) => b.status === 'paid');
@@ -212,7 +217,6 @@ export default function AllBillsPage() {
     };
   }, [filteredBills]);
 
-  // เปิดดูรายละเอียดบิล + โหลดรายการสินค้าและข้อมูลการชำระเงินเพื่อแสดงใน ReceiptModal
   const handleOpenBillReceipt = async (bill: BillRecord) => {
     try {
       setSelectedBill(bill);
@@ -252,14 +256,84 @@ export default function AllBillsPage() {
     }
   };
 
-  // ยืนยันยกเลิกบิล: คืนสต็อกกลับเข้าที่เดิม และเปลี่ยนสถานะบิลเป็น 'cancelled' (ไม่รวมยอดขาย แต่เก็บไว้ดูย้อนหลัง)
+  // เปิด Modal รับชำระบิลเครดิต
+  const handleOpenSettleCreditModal = (bill: BillRecord) => {
+    setCreditBillToPay(bill);
+    setSettleMethod('cash');
+    setSettleCashReceived(String(Number(bill.total_amount || 0)));
+    setSettleTransferNote('');
+    setSettleError(null);
+  };
+
+  const settleBillAmount = Number(creditBillToPay?.total_amount || 0);
+  const settleCashNum = parseFloat(settleCashReceived) || 0;
+  const settleChangeAmount = Math.max(0, settleCashNum - settleBillAmount);
+
+  // ยืนยันรับชำระบิลเครดิต: บันทึก payments ด้วย paid_at วันนี้ (ยอดเข้าวันที่จ่ายจริง) และเปลี่ยนสถานะบิลเป็น 'paid'
+  const handleConfirmSettleCredit = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!creditBillToPay) return;
+    setSettleError(null);
+
+    if (settleMethod === 'cash' && settleCashNum < settleBillAmount) {
+      setSettleError('จำนวนเงินสดที่รับมาน้อยกว่ายอดค้างชำระครับ');
+      return;
+    }
+
+    try {
+      setIsSettlingCredit(true);
+      const paidAtIso = new Date().toISOString();
+
+      // 1. บันทึกการรับชำระลง payments ตามวันที่ลูกค้ามาจ่ายจริง (paid_at = วันนี้)
+      const { error: payErr } = await supabase.from('payments').insert({
+        bill_id: creditBillToPay.id,
+        payment_method: settleMethod,
+        amount: settleBillAmount,
+        received_amount: settleMethod === 'cash' ? settleCashNum : settleBillAmount,
+        change_amount: settleMethod === 'cash' ? settleChangeAmount : 0,
+        payment_note:
+          settleMethod === 'transfer'
+            ? settleTransferNote.trim() || 'รับชำระบิลเครดิต (โอนจ่าย)'
+            : 'รับชำระบิลเครดิต (เงินสด)',
+        paid_at: paidAtIso,
+        received_by_user_id: currentUserId,
+      });
+
+      if (payErr) throw payErr;
+
+      // 2. เปลี่ยนสถานะบิลเป็น 'paid' (ชำระเงินแล้ว)
+      const { error: billErr } = await supabase
+        .from('bills')
+        .update({ status: 'paid' })
+        .eq('id', creditBillToPay.id);
+
+      if (billErr) throw billErr;
+
+      setBills((prev) =>
+        prev.map((b) => (b.id === creditBillToPay.id ? { ...b, status: 'paid' } : b))
+      );
+      if (selectedBill?.id === creditBillToPay.id) {
+        setSelectedBill((prev) => (prev ? { ...prev, status: 'paid' } : prev));
+      }
+
+      setCreditBillToPay(null);
+      setSettleCashReceived('');
+      setSettleTransferNote('');
+    } catch (err: any) {
+      console.error('Error settling credit bill:', err);
+      setSettleError(`เกิดข้อผิดพลาดในการรับชำระ: ${err?.message || 'โปรดลองอีกครั้ง'}`);
+    } finally {
+      setIsSettlingCredit(false);
+    }
+  };
+
+  // ยืนยันยกเลิกบิล: คืนสต็อกกลับเข้า stocks.current_qty และเปลี่ยนสถานะบิลเป็น 'cancelled'
   const handleConfirmCancelBill = async () => {
     if (!billToCancel) return;
 
     try {
       setIsCancelling(true);
 
-      // เช็กสถานะล่าสุดจาก DB อีกรอบ กันการกดยกเลิกซ้ำ 2 รอบ
       const { data: latestBill, error: fetchLatestErr } = await supabase
         .from('bills')
         .select('id, status, bill_number')
@@ -273,7 +347,6 @@ export default function AllBillsPage() {
         return;
       }
 
-      // 1. ดึงรายการสินค้าในบิลนี้เพื่อคืนสต็อกกลับที่เดิม
       const { data: billItemsRows, error: itemsErr } = await supabase
         .from('bill_items')
         .select('product_id, qty')
@@ -281,7 +354,6 @@ export default function AllBillsPage() {
 
       if (itemsErr) throw itemsErr;
 
-      // รวมยอดจำนวนที่ต้องคืนต่อ product_id
       const returnMap = new Map<string, number>();
       (billItemsRows || []).forEach((row: any) => {
         const qtyNum = Number(row.qty || 0);
@@ -290,7 +362,6 @@ export default function AllBillsPage() {
         }
       });
 
-      // คืนสต็อกกลับเข้าตาราง stocks (ใช้คอลัมน์ current_qty ตามโครงสร้างจริง)
       const nowIso = new Date().toISOString();
       for (const [productId, addQty] of returnMap.entries()) {
         const { data: stockRow, error: stockFetchErr } = await supabase
@@ -324,7 +395,6 @@ export default function AllBillsPage() {
         }
       }
 
-      // 2. เปลี่ยนสถานะบิลเป็น 'cancelled' (ยังคงบิลไว้เป็นหลักฐาน ไม่นับรวมยอดขาย)
       const { error: updateBillErr } = await supabase
         .from('bills')
         .update({ status: 'cancelled' })
@@ -332,7 +402,6 @@ export default function AllBillsPage() {
 
       if (updateBillErr) throw updateBillErr;
 
-      // อัปเดต state หน้าจอทันที
       setBills((prev) =>
         prev.map((b) => (b.id === latestBill.id ? { ...b, status: 'cancelled' } : b))
       );
@@ -349,7 +418,6 @@ export default function AllBillsPage() {
     }
   };
 
-  // เลื่อนแถวปัดบิลซ้าย/ขวาด้วยปุ่ม
   const scrollCarousel = (direction: 'left' | 'right') => {
     if (!carouselRef.current) return;
     const amount = direction === 'left' ? -360 : 360;
@@ -368,7 +436,7 @@ export default function AllBillsPage() {
     if (status === 'paid') {
       return (
         <span className="px-2.5 py-1 rounded-full text-[11px] font-black bg-emerald-500/15 text-emerald-400 border border-emerald-500/30">
-          ✓ ชำระแล้ว
+          ✓ ชำระเงินแล้ว
         </span>
       );
     }
@@ -413,7 +481,7 @@ export default function AllBillsPage() {
                 🧾 รายการบิลทั้งหมด (Bills History)
               </h1>
               <p className="text-xs text-slate-400 mt-1">
-                ค้นหาย้อนหลัง เลือกดูบิลรายวันแบบปัดสไลด์ และเปิดรีปริ้นใบเสร็จได้ทันที
+                ค้นหาย้อนหลัง รับชำระบิลเครดิต (เงินสด/โอน) และเปิดรีปริ้นใบเสร็จได้ทันที
               </p>
             </div>
           </div>
@@ -481,7 +549,6 @@ export default function AllBillsPage() {
         {/* Filter & Search Bar */}
         <div className="bg-slate-900 border border-slate-800 rounded-3xl p-5 space-y-4 shadow-lg">
           <div className="grid grid-cols-1 md:grid-cols-12 gap-3">
-            {/* Search เลขที่บิล / ชื่อลูกค้า */}
             <div className="md:col-span-5">
               <label className="block text-[11px] text-slate-400 font-bold mb-1.5">
                 ค้นหาเลขที่บิล หรือ ชื่อลูกค้า
@@ -495,7 +562,6 @@ export default function AllBillsPage() {
               />
             </div>
 
-            {/* โหมดกรองวัน/เดือน/ทั้งหมด */}
             <div className="md:col-span-3">
               <label className="block text-[11px] text-slate-400 font-bold mb-1.5">
                 ช่วงเวลา
@@ -531,7 +597,6 @@ export default function AllBillsPage() {
               </div>
             </div>
 
-            {/* ตัวเลือก วัน หรือ เดือน */}
             <div className="md:col-span-2">
               <label className="block text-[11px] text-slate-400 font-bold mb-1.5">
                 {dateFilterMode === 'month' ? 'เลือกเดือน' : 'เลือกวันที่'}
@@ -556,7 +621,6 @@ export default function AllBillsPage() {
               )}
             </div>
 
-            {/* ตัวเลือกปี */}
             <div className="md:col-span-2">
               <label className="block text-[11px] text-slate-400 font-bold mb-1.5">
                 ปี (ค.ศ.)
@@ -576,7 +640,6 @@ export default function AllBillsPage() {
             </div>
           </div>
 
-          {/* แถบกรองสถานะบิล */}
           <div className="flex flex-wrap items-center justify-between gap-2 pt-2 border-t border-slate-800/80">
             <div className="flex flex-wrap gap-2">
               {[
@@ -627,7 +690,6 @@ export default function AllBillsPage() {
             <p className="text-xs text-slate-500">ลองเปลี่ยนวันที่/เดือน หรือล้างคำค้นหาดูอีกครั้งครับ</p>
           </div>
         ) : viewMode === 'swipe' ? (
-          /* โหมดปัดเลื่อนดูบิลทีละใบ (Swipeable Snap Deck) */
           <div className="bg-slate-900 border border-slate-800 rounded-3xl p-6 space-y-4 shadow-xl">
             <div className="flex items-center justify-between">
               <div>
@@ -635,7 +697,7 @@ export default function AllBillsPage() {
                   👉 ปัดเลื่อนดูบิลทีละใบ ({filteredBills.length} บิล)
                 </h2>
                 <p className="text-xs text-slate-400">
-                  ลากหรือปัดซ้าย-ขวาบนมือถือ/ทัชแพด หรือกดปุ่มลูกศร เพื่อดูบิลเรียงลำดับทีละใบ แล้วกดเปิดใบเสร็จเพื่อรีปริ้น
+                  ลากหรือปัดซ้าย-ขวาบนมือถือ/ทัชแพด หรือกดปุ่มลูกศร เพื่อดูบิลเรียงลำดับทีละใบ แล้วกดรับชำระหรือรีปริ้น
                 </p>
               </div>
               <div className="flex items-center gap-2">
@@ -695,14 +757,27 @@ export default function AllBillsPage() {
                     </div>
                   </div>
 
-                  <div className="mt-5 pt-4 border-t border-slate-800 flex items-center justify-between gap-2">
-                    <div>
-                      <p className="text-[11px] text-slate-400">ยอดรวมสุทธิ</p>
+                  <div className="mt-5 pt-4 border-t border-slate-800 space-y-3">
+                    <div className="flex items-center justify-between">
+                      <span className="text-[11px] text-slate-400">ยอดรวมสุทธิ</span>
                       <p className="text-2xl font-black text-amber-400">
                         ฿{Number(bill.total_amount || 0).toLocaleString()}
                       </p>
                     </div>
-                    <div className="flex items-center gap-2">
+
+                    <div className="flex items-center justify-end gap-2 flex-wrap">
+                      {bill.status === 'credit' && (
+                        <button
+                          type="button"
+                          onClick={(e) => {
+                            e.stopPropagation();
+                            handleOpenSettleCreditModal(bill);
+                          }}
+                          className="px-3.5 py-2 rounded-xl bg-emerald-500 hover:bg-emerald-400 text-slate-950 font-black text-xs transition cursor-pointer"
+                        >
+                          💳 รับชำระ
+                        </button>
+                      )}
                       {bill.status !== 'cancelled' && (
                         <button
                           type="button"
@@ -710,12 +785,12 @@ export default function AllBillsPage() {
                             e.stopPropagation();
                             setBillToCancel(bill);
                           }}
-                          className="px-3 py-2.5 rounded-xl bg-rose-500/15 hover:bg-rose-500 text-rose-300 hover:text-white border border-rose-500/30 font-bold text-xs transition cursor-pointer"
+                          className="px-3 py-2 rounded-xl bg-rose-500/15 hover:bg-rose-500 text-rose-300 hover:text-white border border-rose-500/30 font-bold text-xs transition cursor-pointer"
                         >
                           ✕ ยกเลิกบิล
                         </button>
                       )}
-                      <span className="px-3.5 py-2.5 rounded-xl bg-amber-500 text-slate-950 font-black text-xs group-hover:bg-amber-400 transition">
+                      <span className="px-3.5 py-2 rounded-xl bg-amber-500 text-slate-950 font-black text-xs group-hover:bg-amber-400 transition">
                         🖨️ รีปริ้น
                       </span>
                     </div>
@@ -725,7 +800,6 @@ export default function AllBillsPage() {
             </div>
           </div>
         ) : (
-          /* โหมดกริดการ์ดทั้งหมด */
           <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
             {filteredBills.map((bill) => (
               <div
@@ -748,11 +822,26 @@ export default function AllBillsPage() {
                   </p>
                 </div>
 
-                <div className="mt-4 pt-3 border-t border-slate-800 flex items-center justify-between gap-2">
-                  <span className="text-xl font-black text-amber-400">
-                    ฿{Number(bill.total_amount || 0).toLocaleString()}
-                  </span>
-                  <div className="flex items-center gap-2">
+                <div className="mt-4 pt-3 border-t border-slate-800 space-y-2.5">
+                  <div className="flex items-center justify-between">
+                    <span className="text-xs text-slate-400">ยอดสุทธิ</span>
+                    <span className="text-xl font-black text-amber-400">
+                      ฿{Number(bill.total_amount || 0).toLocaleString()}
+                    </span>
+                  </div>
+                  <div className="flex items-center justify-end gap-2 flex-wrap">
+                    {bill.status === 'credit' && (
+                      <button
+                        type="button"
+                        onClick={(e) => {
+                          e.stopPropagation();
+                          handleOpenSettleCreditModal(bill);
+                        }}
+                        className="px-3 py-2 rounded-xl bg-emerald-500 hover:bg-emerald-400 text-slate-950 font-black text-xs transition cursor-pointer"
+                      >
+                        💳 รับชำระ
+                      </button>
+                    )}
                     {bill.status !== 'cancelled' && (
                       <button
                         type="button"
@@ -775,6 +864,137 @@ export default function AllBillsPage() {
           </div>
         )}
       </div>
+
+      {/* Modal รับชำระบิลเครดิต (เลือก เงินสด หรือ โอนจ่าย -> ยอดเข้าวันที่ชำระจริง) */}
+      {creditBillToPay && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/75 backdrop-blur-sm p-4">
+          <form
+            onSubmit={handleConfirmSettleCredit}
+            className="bg-slate-900 border border-slate-800 rounded-3xl p-6 max-w-md w-full shadow-2xl space-y-4"
+          >
+            <div className="flex items-center justify-between border-b border-slate-800 pb-3">
+              <div>
+                <h3 className="text-xl font-black text-emerald-400">💳 รับชำระบิลเครดิต</h3>
+                <p className="text-xs text-slate-400 font-mono mt-0.5">
+                  บิล {creditBillToPay.bill_number} • {extractCustomerName(creditBillToPay.bill_name)}
+                </p>
+              </div>
+              <button
+                type="button"
+                onClick={() => setCreditBillToPay(null)}
+                className="w-8 h-8 rounded-full bg-slate-800 hover:bg-slate-700 text-slate-300 text-xs font-bold cursor-pointer"
+              >
+                ✕
+              </button>
+            </div>
+
+            <div className="bg-slate-950 border border-slate-800 rounded-2xl p-4 flex items-center justify-between">
+              <span className="text-xs text-slate-400 font-bold">ยอดค้างชำระสุทธิ</span>
+              <span className="text-2xl font-black text-amber-400 font-mono">
+                ฿{settleBillAmount.toLocaleString()}
+              </span>
+            </div>
+
+            <div className="space-y-2">
+              <label className="block text-xs font-bold text-slate-300">
+                เลือกช่องทางรับชำระวันนี้ (ยอดจะบันทึกเข้าวันที่จ่ายจริง)
+              </label>
+              <div className="grid grid-cols-2 gap-2.5">
+                <button
+                  type="button"
+                  onClick={() => {
+                    setSettleMethod('cash');
+                    setSettleError(null);
+                  }}
+                  className={`py-3 rounded-xl text-xs font-black border transition cursor-pointer ${
+                    settleMethod === 'cash'
+                      ? 'bg-emerald-500 text-slate-950 border-emerald-400'
+                      : 'bg-slate-950 text-slate-300 border-slate-700 hover:border-slate-500'
+                  }`}
+                >
+                  💵 เงินสด
+                </button>
+                <button
+                  type="button"
+                  onClick={() => {
+                    setSettleMethod('transfer');
+                    setSettleError(null);
+                  }}
+                  className={`py-3 rounded-xl text-xs font-black border transition cursor-pointer ${
+                    settleMethod === 'transfer'
+                      ? 'bg-sky-500 text-slate-950 border-sky-400'
+                      : 'bg-slate-950 text-slate-300 border-slate-700 hover:border-slate-500'
+                  }`}
+                >
+                  📲 โอนจ่าย
+                </button>
+              </div>
+            </div>
+
+            {settleMethod === 'cash' ? (
+              <div className="space-y-3 bg-slate-950/70 border border-slate-800 rounded-2xl p-3.5">
+                <div>
+                  <label className="block text-xs text-slate-400 font-bold mb-1">
+                    รับเงินสดมา (บาท)
+                  </label>
+                  <input
+                    type="number"
+                    step="0.01"
+                    min="0"
+                    value={settleCashReceived}
+                    onChange={(e) => setSettleCashReceived(e.target.value)}
+                    className="w-full bg-slate-900 border border-slate-700 focus:border-emerald-500 rounded-xl px-3.5 py-2.5 text-sm font-mono font-bold text-white outline-none"
+                    required
+                  />
+                </div>
+                <div className="flex items-center justify-between text-xs pt-1 border-t border-slate-800">
+                  <span className="text-slate-400">เงินทอน:</span>
+                  <span className="text-base font-mono font-black text-emerald-400">
+                    ฿{settleChangeAmount.toLocaleString()}
+                  </span>
+                </div>
+              </div>
+            ) : (
+              <div className="space-y-1.5 bg-slate-950/70 border border-slate-800 rounded-2xl p-3.5">
+                <label className="block text-xs text-sky-300 font-bold">
+                  หมายเหตุการโอน / เลขสลิป (ไม่บังคับ)
+                </label>
+                <input
+                  type="text"
+                  value={settleTransferNote}
+                  onChange={(e) => setSettleTransferNote(e.target.value)}
+                  placeholder="เช่น โอน KBank วันนี้ / สลิป 1234..."
+                  className="w-full bg-slate-900 border border-slate-700 focus:border-sky-500 rounded-xl px-3.5 py-2.5 text-xs text-white outline-none"
+                />
+              </div>
+            )}
+
+            {settleError && (
+              <p className="text-xs text-rose-400 font-bold bg-rose-500/10 border border-rose-500/30 rounded-xl px-3 py-2">
+                {settleError}
+              </p>
+            )}
+
+            <div className="flex gap-3 pt-2">
+              <button
+                type="button"
+                disabled={isSettlingCredit}
+                onClick={() => setCreditBillToPay(null)}
+                className="flex-1 py-2.5 rounded-xl bg-slate-800 hover:bg-slate-700 text-slate-300 font-bold text-sm transition cursor-pointer"
+              >
+                ยกเลิก
+              </button>
+              <button
+                type="submit"
+                disabled={isSettlingCredit}
+                className="flex-1 py-2.5 rounded-xl bg-emerald-500 hover:bg-emerald-400 disabled:bg-slate-700 text-slate-950 font-black text-sm transition cursor-pointer"
+              >
+                {isSettlingCredit ? 'กำลังบันทึก...' : '✓ ยืนยันรับชำระ'}
+              </button>
+            </div>
+          </form>
+        </div>
+      )}
 
       {/* Modal ยืนยันการยกเลิกบิล */}
       {billToCancel && (
@@ -839,7 +1059,7 @@ export default function AllBillsPage() {
         items={modalItems}
         totalQuantity={modalTotalQty}
         totalAmount={modalTotalAmount}
-        paymentMethod={modalPayment?.payment_method || 'cash'}
+        paymentMethod={modalPayment?.payment_method || (selectedBill?.status === 'credit' ? 'credit' : 'cash')}
         cashReceived={
           modalPayment?.received_amount ? String(modalPayment.received_amount) : ''
         }

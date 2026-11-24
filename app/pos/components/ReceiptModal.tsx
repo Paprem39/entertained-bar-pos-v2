@@ -140,12 +140,25 @@ export default function ReceiptModal({
             <span>ยอดรวมจำนวน (QTY):</span>
             <span>{totalQuantity} ชิ้น</span>
           </div>
+
+          {hasAnyDrink && (
+            <p className="text-[10px] text-slate-500 pt-1">
+              * หมายถึง รายการดื่มพนักงาน/ผู้รับดื่ม
+            </p>
+          )}
+          
           <div className="flex justify-between text-base font-black text-slate-900 pt-1 border-t border-slate-200">
             <span>ยอดรวมสุทธิ:</span>
             <span>฿{totalAmount.toLocaleString()}</span>
           </div>
+
+          {/* กรณีชำระเงินสด */}
           {paymentMethod === 'cash' && cashNum > 0 && (
             <>
+              <div className="flex justify-between text-slate-600 pt-1 border-t border-slate-200">
+                <span>ช่องทางชำระ:</span>
+                <strong className="text-emerald-700">💵 เงินสด</strong>
+              </div>
               <div className="flex justify-between text-slate-600">
                 <span>รับเงินสดมา:</span>
                 <span>฿{cashNum.toLocaleString()}</span>
@@ -156,17 +169,45 @@ export default function ReceiptModal({
               </div>
             </>
           )}
-          {paymentMethod === 'transfer' && transferNote && (
-            <div className="flex justify-between text-slate-600 pt-1 border-t border-slate-200">
-              <span>หมายเหตุโอน:</span>
-              <strong className="text-amber-700">{transferNote}</strong>
-            </div>
+
+          {/* กรณีลูกค้าโอนจ่าย (แสดงเสมอแม้ไม่ได้กรอกหมายเหตุ) */}
+          {paymentMethod === 'transfer' && (
+            <>
+              <div className="flex justify-between items-center text-slate-700 pt-1.5 border-t border-slate-200">
+                <span>ช่องทางชำระ:</span>
+                <span className="px-2 py-0.5 rounded bg-sky-100 text-sky-800 font-black">
+                  📲 โอนจ่าย
+                </span>
+              </div>
+              <div className="flex justify-between text-slate-600">
+                <span>ยอดโอนชำระ:</span>
+                <strong className="text-slate-900">฿{totalAmount.toLocaleString()}</strong>
+              </div>
+              {transferNote && transferNote.trim() !== '' && (
+                <div className="flex justify-between gap-2 text-slate-600">
+                  <span className="shrink-0">หมายเหตุโอน:</span>
+                  <strong className="text-amber-700 text-right">{transferNote}</strong>
+                </div>
+              )}
+            </>
           )}
-          {hasAnyDrink && (
-            <p className="text-[10px] text-slate-500 pt-1">
-              * หมายถึง รายการดื่มพนักงาน/ผู้รับดื่ม
-            </p>
+
+          {/* กรณีบันทึกเป็นเครดิต (ค้างชำระ) */}
+          {paymentMethod === 'credit' && (
+            <>
+              <div className="flex justify-between items-center text-slate-700 pt-1.5 border-t border-slate-200">
+                <span>สถานะบิล:</span>
+                <span className="px-2 py-0.5 rounded bg-amber-100 text-amber-800 font-black">
+                  ⏳ เครดิต (ค้างชำระ)
+                </span>
+              </div>
+              <div className="flex justify-between text-slate-600">
+                <span>ยอดค้างชำระ:</span>
+                <strong className="text-slate-900">฿{totalAmount.toLocaleString()}</strong>
+              </div>
+            </>
           )}
+
         </div>
 
         <div className="text-center text-xs text-slate-600 pt-2 border-t border-dashed border-slate-300 space-y-1">
