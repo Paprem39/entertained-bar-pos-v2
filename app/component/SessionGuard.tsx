@@ -8,8 +8,8 @@ export default function SessionGuard({ children }: { children: React.ReactNode }
   const pathname = usePathname()
 
   useEffect(() => {
-    // ถ้ารวมอยู่ที่หน้า Login (หน้าแรก '/') ไม่ต้องเช็ก Session
-    if (pathname === '/') return
+    // ถ้ารวมอยู่ที่หน้า Login (หน้าแรก '/') หรือหน้าเมนูลูกค้า ('/menu') ไม่ต้องเช็ก Session
+    if (pathname === '/' || pathname.startsWith('/menu')) return
 
     const checkSession = async () => {
       try {

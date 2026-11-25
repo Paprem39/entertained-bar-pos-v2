@@ -26,43 +26,41 @@ export default function MenuPage() {
 
         const [{ data: catData, error: catErr }, { data: prodData, error: prodErr }] =
           await Promise.all([
-            supabase
-              .from('categories')
-              .select('id, name')
-              .eq('is_active', true)
-              .order('sort_order', { ascending: true }),
-            supabase
-              .from('products')
-              .select('id, name, normal_price, category_id, categories(name)')
-              .eq('is_active', true)
-              .order('name', { ascending: true }),
+            supabase.from('categories').select('*'),
+            supabase.from('products').select('id, name, normal_price, category_id, is_active'),
           ]);
 
         if (catErr) throw catErr;
         if (prodErr) throw prodErr;
 
+        const activeCats = (catData || []).filter((c: any) => c.is_active !== false);
+        activeCats.sort((a: any, b: any) => Number(a.sort_order ?? 999) - Number(b.sort_order ?? 999));
+
         const catMap: Record<string, string> = {};
-        (catData || []).forEach((c: any) => {
-          catMap[c.id] = c.name;
+        activeCats.forEach((c: any) => {
+          if (c.id && c.name) {
+            catMap[String(c.id)] = String(c.name);
+          }
         });
 
-        setCategories(['ทั้งหมด', ...(catData || []).map((c: any) => c.name)]);
+        setCategories(['ทั้งหมด', ...activeCats.map((c: any) => String(c.name))]);
+
+        const activeProds = (prodData || [])
+          .filter((p: any) => p.is_active !== false)
+          .sort((a: any, b: any) => String(a.name || '').localeCompare(String(b.name || '')));
 
         // คัดเฉพาะฟิลด์ที่ลูกค้าควรเห็น: ชื่อสินค้า, ราคาขายปกติ, หมวดหมู่
-        const formatted: CustomerMenuItem[] = (prodData || []).map((p: any) => {
-          const catObj = Array.isArray(p.categories) ? p.categories[0] : p.categories;
-          return {
-            id: p.id,
-            name: p.name,
-            price: Number(p.normal_price || 0),
-            category: catObj?.name || catMap[p.category_id] || 'อื่นๆ',
-          };
-        });
+        const formatted: CustomerMenuItem[] = activeProds.map((p: any) => ({
+          id: String(p.id),
+          name: String(p.name || ''),
+          price: Number(p.normal_price || 0),
+          category: catMap[String(p.category_id)] || 'อื่นๆ',
+        }));
 
         setItems(formatted);
-      } catch (err) {
+      } catch (err: any) {
         console.error('Error loading customer menu:', err);
-        setErrorMsg('ไม่สามารถโหลดรายการเมนูได้ในขณะนี้');
+        setErrorMsg(err?.message || 'ไม่สามารถโหลดรายการเมนูได้ในขณะนี้');
       } finally {
         setLoading(false);
       }
