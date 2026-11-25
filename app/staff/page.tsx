@@ -843,19 +843,40 @@ export default function StaffPortalPage() {
         </button>
       </nav>
 
-      {/* Modal แสดง QR Code เมนูให้ลูกค้าสแกน (หน้า /menu ซ่อนสต็อกทั้งหมด) */}
+      {/* Modal แสดง QR Code เมนูให้ลูกค้าสแกน (ชี้ไปที่ /menu ซึ่งแสดงเฉพาะชื่อสินค้าและราคาขายปกติ) */}
       {showQrModal && (
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/80 backdrop-blur-sm p-4">
-          <div className="bg-white text-slate-900 rounded-3xl p-6 max-w-sm w-full text-center space-y-4 shadow-2xl">
-            <h3 className="text-xl font-black text-slate-900">📱 QR รายการเมนู</h3>
-            <p className="text-xs text-slate-600">
-              แสดงรายการสินค้าและราคาของร้าน (ซ่อนจำนวนสต็อกคงเหลืออัตโนมัติ)
-            </p>
-            {qrImageSrc && (
-              <div className="w-56 h-56 mx-auto bg-white p-3 rounded-2xl border-2 border-slate-200 flex items-center justify-center">
-                <img src={qrImageSrc} alt="QR เมนูร้าน" className="w-full h-full object-contain" />
+          <div className="bg-slate-900 border border-amber-500/30 text-slate-100 rounded-3xl p-6 max-w-sm w-full text-center space-y-4 shadow-2xl">
+            <div>
+              <p className="text-[10px] font-bold tracking-[0.22em] text-amber-400/80 uppercase">
+                CUSTOMER QR MENU
+              </p>
+              <h3 className="text-xl font-black text-amber-400 mt-0.5">
+                สแกนดูรายการเมนู
+              </h3>
+              <p className="text-xs text-slate-400 mt-1">
+                ให้ลูกค้าสแกนเพื่อดูชื่อสินค้าและราคาขายปกติ (ซ่อนจำนวนสต็อกอัตโนมัติ)
+              </p>
+            </div>
+
+            {qrImageSrc ? (
+              <div className="w-56 h-56 mx-auto bg-white p-3 rounded-2xl border border-amber-500/20 flex items-center justify-center">
+                <img
+                  src={qrImageSrc}
+                  alt="QR เมนูร้าน"
+                  className="w-full h-full object-contain"
+                />
+              </div>
+            ) : (
+              <div className="w-56 h-56 mx-auto bg-slate-950 rounded-2xl border border-slate-800 flex items-center justify-center text-xs text-slate-500">
+                กำลังสร้าง QR Code...
               </div>
             )}
+
+            <p className="text-[11px] font-mono text-slate-400 break-all bg-slate-950 px-3 py-2 rounded-xl border border-slate-800">
+              {publicMenuUrl}
+            </p>
+
             <button
               type="button"
               onClick={() => setShowQrModal(false)}

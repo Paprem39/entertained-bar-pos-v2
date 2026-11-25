@@ -4,7 +4,12 @@ import type { NextRequest } from 'next/server'
 export async function middleware(request: NextRequest) {
   const path = request.nextUrl.pathname
 
-  // ป้องกันเฉพาะหน้า Dashboard, POS และ Staff
+  // ปล่อยผ่านหน้าเมนูลูกค้า /menu ให้ลูกค้าสแกน QR เปิดดูได้
+  if (path.startsWith('/menu')) {
+    return NextResponse.next()
+  }
+
+  // ป้องกันหน้า Dashboard, POS และ Staff ด้วย cookie bar_session
   if (
     path.startsWith('/dashboard') ||
     path.startsWith('/pos') ||
@@ -13,7 +18,6 @@ export async function middleware(request: NextRequest) {
     const sessionCookie = request.cookies.get('bar_session')
 
     if (!sessionCookie) {
-      // ถ้าไม่มีคุกกี้ ดีดกลับไปหน้า Login
       return NextResponse.redirect(new URL('/', request.url))
     }
   }
@@ -22,5 +26,5 @@ export async function middleware(request: NextRequest) {
 }
 
 export const config = {
-  matcher: ['/dashboard/:path*', '/pos/:path*', '/staff/:path*'],
+  matcher: ['/menu/:path*', '/dashboard/:path*', '/pos/:path*', '/staff/:path*'],
 }
