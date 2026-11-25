@@ -69,16 +69,15 @@ export default function StaffPortalPage() {
   // Staff Session Info
   const [staffName, setStaffName] = useState<string>('กำลังโหลด...');
 
-  // Tab 1: Menu + Stock + Customer Showcase Modal
+  // Tab 1: Menu + Stock + Customer QR Modal
   const [menuItems, setMenuItems] = useState<StaffMenuItem[]>([]);
   const [categories, setCategories] = useState<string[]>(['ทั้งหมด']);
   const [selectedCategory, setSelectedCategory] = useState<string>('ทั้งหมด');
   const [menuSearch, setMenuSearch] = useState<string>('');
   const [loadingMenu, setLoadingMenu] = useState<boolean>(true);
   const [menuError, setMenuError] = useState<string | null>(null);
-  const [showCustomerMenuModal, setShowCustomerMenuModal] = useState<boolean>(false);
-  const [customerCat, setCustomerCat] = useState<string>('ทั้งหมด');
-  const [customerSearch, setCustomerSearch] = useState<string>('');
+  const [showQrModal, setShowQrModal] = useState<boolean>(false);
+  const [publicMenuUrl, setPublicMenuUrl] = useState<string>('');
 
   // Tab 2: My Staff Drinks & Income
   const [drinkRecords, setDrinkRecords] = useState<StaffDrinkRecord[]>([]);
@@ -95,6 +94,13 @@ export default function StaffPortalPage() {
   const [loadingBlocks, setLoadingBlocks] = useState<boolean>(true);
   const [selectedBlockDetail, setSelectedBlockDetail] = useState<ActiveBillDetail | null>(null);
   const [loadingBlockDetail, setLoadingBlockDetail] = useState<boolean>(false);
+
+  // ตั้งค่า URL สำหรับหน้า QR เมนูลูกค้า (/menu)
+  useEffect(() => {
+    if (typeof window !== 'undefined') {
+      setPublicMenuUrl(`${window.location.origin}/menu`);
+    }
+  }, []);
 
   // 1. ดึงข้อมูลพนักงานที่ล็อกอินอยู่
   useEffect(() => {
@@ -329,15 +335,6 @@ export default function StaffPortalPage() {
     });
   }, [menuItems, selectedCategory, menuSearch]);
 
-  const filteredCustomerMenu = useMemo(() => {
-    const q = customerSearch.trim().toLowerCase();
-    return menuItems.filter((m) => {
-      const matchCat = customerCat === 'ทั้งหมด' || m.category === customerCat;
-      const matchSearch = !q || m.name.toLowerCase().includes(q);
-      return matchCat && matchSearch;
-    });
-  }, [menuItems, customerCat, customerSearch]);
-
   const getLocalDateISO = (isoStr?: string | null): string | null => {
     if (!isoStr) return null;
     const d = new Date(isoStr);
@@ -420,6 +417,13 @@ export default function StaffPortalPage() {
     router.push('/');
   };
 
+  // URL สร้างรูป QR Code ชี้ไปที่ /menu เพื่อให้ลูกค้าสแกนดูเมนู
+  const qrImageSrc = publicMenuUrl
+    ? `https://api.qrserver.com/v1/create-qr-code/?size=260x260&data=${encodeURIComponent(
+        publicMenuUrl
+      )}`
+    : '';
+
   return (
     <div className="min-h-screen bg-slate-950 text-slate-100 font-sans pb-24 md:pb-10">
       {/* Top Header */}
@@ -457,7 +461,7 @@ export default function StaffPortalPage() {
               activeTab === 'menu' ? 'bg-amber-500 text-slate-950' : 'text-slate-400 hover:text-white'
             }`}
           >
-            📋 เมนูสินค้า & สต็อก
+            📋 เมนูสินค้า &amp; สต็อก
           </button>
           <button
             type="button"
@@ -466,7 +470,7 @@ export default function StaffPortalPage() {
               activeTab === 'drinks' ? 'bg-amber-500 text-slate-950' : 'text-slate-400 hover:text-white'
             }`}
           >
-            🍹 รายได้ & ยอดดื่มของฉัน
+            🍹 รายได้ &amp; ยอดดื่มของฉัน
           </button>
           <button
             type="button"
@@ -485,16 +489,16 @@ export default function StaffPortalPage() {
 
       {/* Main Content */}
       <main className="max-w-5xl mx-auto px-4 pt-5 space-y-5">
-        {/* ==================== TAB 1: เมนู & สต็อก ==================== */}
+        {/* ==================== TAB 1: เมนู & สต็อก + QR ลูกค้า ==================== */}
         {activeTab === 'menu' && (
           <div className="space-y-4">
             <div className="bg-slate-900 border border-slate-800 rounded-2xl p-4 flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3">
               <div>
                 <h2 className="text-base font-black text-amber-400">
-                  📋 ใบเมนูรายการสินค้า & สต็อกคงเหลือ
+                  📋 ใบเมนูรายการสินค้า &amp; สต็อกคงเหลือ
                 </h2>
                 <p className="text-xs text-slate-400">
-                  ดูราคาและสต็อกของร้าน หรือเปิดหน้าเมนูแบบสบายตาโชว์เฉพาะชื่อและราคาขายปกติให้ลูกค้าดู
+                  เช็กจำนวนคงเหลือจริงก่อนรับออเดอร์ หรือเปิด QR ให้ลูกค้าสแกนดูหน้าเมนู (/menu)
                 </p>
               </div>
               <div className="flex items-center gap-2 shrink-0">
@@ -507,14 +511,10 @@ export default function StaffPortalPage() {
                 </button>
                 <button
                   type="button"
-                  onClick={() => {
-                    setCustomerCat('ทั้งหมด');
-                    setCustomerSearch('');
-                    setShowCustomerMenuModal(true);
-                  }}
+                  onClick={() => setShowQrModal(true)}
                   className="px-4 py-2.5 rounded-xl bg-amber-500 hover:bg-amber-400 text-slate-950 font-black text-xs shadow-lg shadow-amber-500/20 transition cursor-pointer"
                 >
-                  📖 โชว์เมนูให้ลูกค้าดู
+                  📱 เปิด QR เมนูให้ลูกค้าสแกน
                 </button>
               </div>
             </div>
@@ -837,7 +837,7 @@ export default function StaffPortalPage() {
           }`}
         >
           <span className="text-base">📋</span>
-          <span>เมนู & สต็อก</span>
+          <span>เมนู &amp; สต็อก</span>
         </button>
         <button
           type="button"
@@ -864,81 +864,47 @@ export default function StaffPortalPage() {
         </button>
       </nav>
 
-      {/* Modal โชว์เมนูให้ลูกค้าดู (แสดงเฉพาะชื่อสินค้า + ราคาขายปกติ ไม่มีสต็อกและไม่มีราคาวันแข่ง) */}
-      {showCustomerMenuModal && (
-        <div className="fixed inset-0 z-50 bg-slate-950 text-slate-100 flex flex-col">
-          <div className="bg-gradient-to-b from-slate-900 to-slate-950 border-b border-amber-500/20 px-4 pt-5 pb-4 sticky top-0 z-10">
-            <div className="max-w-xl mx-auto space-y-3">
-              <div className="flex items-center justify-between gap-3">
-                <div>
-                  <p className="text-[10px] font-bold tracking-[0.22em] text-amber-400/80 uppercase">
-                    MENU &amp; PRICE LIST
-                  </p>
-                  <h3 className="text-xl font-black text-transparent bg-clip-text bg-gradient-to-r from-amber-200 via-amber-400 to-amber-500">
-                    ENTERTAINED BAR
-                  </h3>
-                </div>
-                <button
-                  type="button"
-                  onClick={() => setShowCustomerMenuModal(false)}
-                  className="px-3.5 py-2 rounded-xl bg-slate-800 hover:bg-slate-700 text-amber-300 border border-amber-500/25 text-xs font-extrabold cursor-pointer"
-                >
-                  ✕ ปิดหน้าเมนู
-                </button>
-              </div>
-
-              <input
-                type="text"
-                value={customerSearch}
-                onChange={(e) => setCustomerSearch(e.target.value)}
-                placeholder="ค้นหารายการสินค้า..."
-                className="w-full bg-slate-900 border border-slate-800 focus:border-amber-500/70 rounded-2xl px-4 py-2.5 text-sm text-white placeholder-slate-500 outline-none"
-              />
-
-              <div className="flex gap-2 overflow-x-auto pb-1">
-                {categories.map((cat) => (
-                  <button
-                    key={cat}
-                    type="button"
-                    onClick={() => setCustomerCat(cat)}
-                    className={`shrink-0 px-3.5 py-1.5 rounded-full text-xs font-bold transition cursor-pointer ${
-                      customerCat === cat
-                        ? 'bg-gradient-to-r from-amber-400 to-amber-500 text-slate-950'
-                        : 'bg-slate-900 text-slate-300 border border-slate-800'
-                    }`}
-                  >
-                    {cat}
-                  </button>
-                ))}
-              </div>
+      {/* Modal แสดง QR Code เมนูให้ลูกค้าสแกน (ชี้ไปที่ /menu) */}
+      {showQrModal && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/80 backdrop-blur-sm p-4">
+          <div className="bg-slate-900 border border-amber-500/30 text-slate-100 rounded-3xl p-6 max-w-sm w-full text-center space-y-4 shadow-2xl">
+            <div>
+              <p className="text-[10px] font-bold tracking-[0.22em] text-amber-400/80 uppercase">
+                CUSTOMER QR MENU
+              </p>
+              <h3 className="text-xl font-black text-amber-400 mt-0.5">
+                สแกนดูรายการเมนู
+              </h3>
+              <p className="text-xs text-slate-400 mt-1">
+                ให้ลูกค้าสแกนเพื่อเปิดหน้าเมนูบนมือถือ (แสดงเฉพาะชื่อและราคาขายปกติ)
+              </p>
             </div>
-          </div>
 
-          <div className="flex-1 overflow-y-auto px-4 py-5">
-            <div className="max-w-xl mx-auto space-y-2.5">
-              {filteredCustomerMenu.length === 0 ? (
-                <div className="py-16 text-center text-slate-500 text-sm">
-                  ไม่พบรายการสินค้าที่ค้นหา
-                </div>
-              ) : (
-                filteredCustomerMenu.map((item) => (
-                  <div
-                    key={item.id}
-                    className="bg-slate-900/80 border border-slate-800 rounded-2xl px-4 py-3.5 flex items-center justify-between gap-4"
-                  >
-                    <div className="min-w-0">
-                      <p className="text-sm sm:text-base font-bold text-slate-100 truncate">
-                        {item.name}
-                      </p>
-                      <p className="text-[11px] text-slate-400 mt-0.5">{item.category}</p>
-                    </div>
-                    <span className="text-base sm:text-lg font-black font-mono text-amber-400 tabular-nums shrink-0">
-                      ฿{item.normal_price.toLocaleString()}
-                    </span>
-                  </div>
-                ))
-              )}
-            </div>
+            {qrImageSrc ? (
+              <div className="w-56 h-56 mx-auto bg-white p-3 rounded-2xl border border-amber-500/20 flex items-center justify-center">
+                <img
+                  src={qrImageSrc}
+                  alt="QR เมนูร้าน"
+                  className="w-full h-full object-contain"
+                />
+              </div>
+            ) : (
+              <div className="w-56 h-56 mx-auto bg-slate-950 rounded-2xl border border-slate-800 flex items-center justify-center text-xs text-slate-500">
+                กำลังสร้าง QR Code...
+              </div>
+            )}
+
+            <p className="text-[11px] font-mono text-slate-400 break-all bg-slate-950 px-3 py-2 rounded-xl border border-slate-800">
+              {publicMenuUrl}
+            </p>
+
+            <button
+              type="button"
+              onClick={() => setShowQrModal(false)}
+              className="w-full py-3 rounded-xl bg-amber-500 hover:bg-amber-400 text-slate-950 font-black text-sm transition cursor-pointer"
+            >
+              ปิดหน้าต่าง QR
+            </button>
           </div>
         </div>
       )}
